@@ -102,3 +102,21 @@ local test = 4
 local list = make_list(1, 2, 2, 3, 4, test, 5)
 local <?list2?> = make_list(list)
 ]]
+
+TEST 'enumerable<string>' [[
+---@class enumerable<T>
+
+---@generic T, U
+---@param self enumerable<T>
+---@param selector fun(item: T): U
+---@return enumerable<U>
+function select(self, selector)
+end
+
+---@type enumerable<integer>
+local source = nil
+
+local <?result?> = select(source, function (item)
+    return tostring(item)
+end)
+]]
