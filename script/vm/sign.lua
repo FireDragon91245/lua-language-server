@@ -6,6 +6,7 @@ local vm            = require 'vm.vm'
 ---@field parent    parser.object
 ---@field signList  vm.node[]
 ---@field docGeneric parser.object[]
+---@field varargIndex? integer
 local mt = {}
 mt.__index = mt
 mt.type = 'sign'
@@ -18,6 +19,11 @@ end
 ---@param doc parser.object
 function mt:addDocGeneric(doc)
     self.docGeneric[#self.docGeneric+1] = doc
+end
+
+---@param index integer
+function mt:setVarargIndex(index)
+    self.varargIndex = index
 end
 
 ---@param uri uri
@@ -265,6 +271,47 @@ function mt:resolve(uri, args)
         return newArgNode
     end
 
+    ---@param node vm.node
+    ---@return vm.node
+    local function normalizeVariadicNode(node)
+        local views = {}
+        local count = 0
+        for n in node:eachObject() do
+            local view = vm.getInfer(n):view(uri)
+            if view and not views[view] then
+                views[view] = true
+                count = count + 1
+                if count > 1 then
+                    return vm.createNode(vm.declareGlobal('type', 'any'))
+                end
+            end
+        end
+        return node
+    end
+
+    ---@param arg parser.object
+    ---@return vm.node
+    local function getVariadicArgNode(arg)
+        local argNode = vm.compileNode(arg)
+        if arg.type == 'table' then
+            local valueNode = vm.getTableValue(uri, argNode, 'integer', true)
+            if valueNode and not valueNode:isEmpty() then
+                return valueNode
+            end
+        end
+        return argNode
+    end
+
+    ---@param startIndex integer
+    ---@return vm.node
+    local function buildVariadicArgNode(startIndex)
+        local merged = vm.createNode()
+        for i = startIndex, #args do
+            merged:merge(getVariadicArgNode(args[i]))
+        end
+        return normalizeVariadicNode(merged)
+    end
+
     ---@param genericNames table<string, true>
     local function isAllResolved(genericNames)
         for n in pairs(genericNames) do
@@ -277,14 +324,25 @@ function mt:resolve(uri, args)
 
     for i, arg in ipairs(args) do
         local sign = self.signList[i]
+        if not sign and self.varargIndex and i >= self.varargIndex then
+            sign = self.signList[self.varargIndex]
+        end
         if not sign then
             break
         end
-        local argNode = vm.compileNode(arg)
+        local argNode
+        if self.varargIndex and i >= self.varargIndex then
+            argNode = buildVariadicArgNode(i)
+        else
+            argNode = vm.compileNode(arg)
+        end
         local knownTypes, genericNames = getSignInfo(sign)
         if not isAllResolved(genericNames) then
             local newArgNode = buildArgNode(argNode, sign, knownTypes)
             resolve(sign, newArgNode)
+        end
+        if self.varargIndex and i >= self.varargIndex then
+            break
         end
     end
 
@@ -296,6 +354,7 @@ function vm.createSign()
     local genericMgr = setmetatable({
         signList  = {},
         docGeneric = {},
+        varargIndex = nil,
     }, mt)
     return genericMgr
 end
@@ -332,12 +391,15 @@ function vm.getSign(source)
             return nil
         end
         if source.args then
-            for _, arg in ipairs(source.args) do
+            for index, arg in ipairs(source.args) do
                 local argNode = vm.compileNode(arg)
                 if arg.optional then
                     argNode:addOptional()
                 end
                 source._sign:addSign(argNode)
+                if arg.type == '...' then
+                    source._sign:setVarargIndex(index)
+                end
             end
         end
     end
@@ -353,7 +415,7 @@ function vm.getSign(source)
         end
         source._sign = vm.createSign()
         if source.type == 'doc.type.function' then
-            for _, arg in ipairs(source.args) do
+            for index, arg in ipairs(source.args) do
                 if arg.extends then
                     local argNode = vm.compileNode(arg.extends)
                     if arg.optional then
@@ -362,6 +424,9 @@ function vm.getSign(source)
                     source._sign:addSign(argNode)
                 else
                     source._sign:addSign(vm.createNode())
+                end
+                if arg.name and arg.name[1] == '...' then
+                    source._sign:setVarargIndex(index)
                 end
             end
         end

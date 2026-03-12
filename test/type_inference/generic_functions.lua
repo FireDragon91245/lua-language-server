@@ -60,3 +60,27 @@ local list = {}
 
 local <?list2?> = list_from(list)
 ]]
+
+TEST 'list<integer>' [[
+---@class list<T>
+
+---@generic T
+---@param ... T
+---@return list<T>
+function list_of(...)
+end
+
+local <?list?> = list_of { 1, 2, 2, 3, 4, 4, 5 }
+]]
+
+TEST 'list<any>' [[
+---@class list<T>
+
+---@generic T
+---@param ... T
+---@return list<T>
+function list_of(...)
+end
+
+local <?list?> = list_of { 1, 'x', true }
+]]
