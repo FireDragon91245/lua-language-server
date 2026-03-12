@@ -274,19 +274,53 @@ function mt:resolve(uri, args)
     ---@param node vm.node
     ---@return vm.node
     local function normalizeVariadicNode(node)
-        local views = {}
-        local count = 0
-        for n in node:eachObject() do
-            local view = vm.getInfer(n):view(uri)
-            if view and not views[view] then
-                views[view] = true
-                count = count + 1
-                if count > 1 then
-                    return vm.createNode(vm.declareGlobal('type', 'any'))
+        ---@param obj vm.node.object
+        ---@return 'integer'|'number'?
+        local function getNumericKind(obj)
+            if obj.type == 'integer' or obj.type == 'doc.type.integer' then
+                return 'integer'
+            end
+            if obj.type == 'number' then
+                return 'number'
+            end
+            if obj.type == 'global' and obj.cate == 'type' then
+                if obj.name == 'integer' then
+                    return 'integer'
+                end
+                if obj.name == 'number' then
+                    return 'number'
                 end
             end
+            return nil
         end
-        return node
+
+        local normalized = vm.createNode()
+        local others = vm.createNode()
+        local hasInteger = false
+        local hasNumber = false
+        for n in node:eachObject() do
+            local numericKind = getNumericKind(n)
+            if numericKind == 'integer' then
+                hasInteger = true
+                goto CONTINUE
+            end
+            if numericKind == 'number' then
+                hasNumber = true
+                goto CONTINUE
+            end
+            others:merge(n)
+            ::CONTINUE::
+        end
+        if hasNumber then
+            normalized:merge(vm.declareGlobal('type', 'number'))
+        elseif hasInteger then
+            normalized:merge(vm.declareGlobal('type', 'integer'))
+        end
+        normalized:merge(others)
+        if normalized:isEmpty() then
+            return node
+        end
+        return normalized
     end
 
     ---@param arg parser.object

@@ -73,7 +73,7 @@ end
 local <?list?> = list_of { 1, 2, 2, 3, 4, 4, 5 }
 ]]
 
-TEST 'list<any>' [[
+TEST 'list<string|integer>' [[
 ---@class list<T>
 
 ---@generic T
@@ -82,7 +82,31 @@ TEST 'list<any>' [[
 function list_of(...)
 end
 
-local <?list?> = list_of { 1, 'x', true }
+local <?list?> = list_of(1, '', 2, 3, '')
+]]
+
+TEST 'list<number>' [[
+---@class list<T>
+
+---@generic T
+---@param ... T
+---@return list<T>
+function list_of(...)
+end
+
+local <?list?> = list_of(1, 1.1, 3)
+]]
+
+TEST 'list<number>' [[
+---@class list<T>
+
+---@generic T
+---@param ... T
+---@return list<T>
+function list_of(...)
+end
+
+local <?list?> = list_of(1.1, 2.2, 3.3)
 ]]
 
 TEST 'list<integer>' [[
@@ -101,6 +125,48 @@ local test = 4
 
 local list = make_list(1, 2, 2, 3, 4, test, 5)
 local <?list2?> = make_list(list)
+]]
+
+TEST 'list<string|integer>' [[
+---@class list<T>
+---@class enumerable<T>
+
+---@generic T
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+function make_list(...)
+end
+
+local <?list?> = make_list(1, '', 2, 3, '')
+]]
+
+TEST 'list<number>' [[
+---@class list<T>
+---@class enumerable<T>
+
+---@generic T
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+function make_list(...)
+end
+
+local <?list?> = make_list(1, 1.1, 3)
+]]
+
+TEST 'list<number>' [[
+---@class list<T>
+---@class enumerable<T>
+
+---@generic T
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+function make_list(...)
+end
+
+local <?list?> = make_list(1.1, 2.2, 3.3)
 ]]
 
 TEST 'enumerable<string>' [[
