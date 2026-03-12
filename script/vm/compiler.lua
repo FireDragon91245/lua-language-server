@@ -1053,8 +1053,9 @@ end
 ---@param list   parser.object[]
 ---@param index  integer
 ---@return vm.node
+---@return parser.object?
 local function selectNode(source, list, index)
-    local result = vm.selectNode(list, index)
+    local result, exp = vm.selectNode(list, index)
     if source.type == 'function.return' then
         -- remove any for returns
         local rtnNode = vm.createNode()
@@ -1071,10 +1072,10 @@ local function selectNode(source, list, index)
             end
         end
         vm.setNode(source, rtnNode)
-        return rtnNode
+        return rtnNode, exp
     end
     vm.setNode(source, result)
-    return result
+    return result, exp
 end
 
 ---@param source parser.object
@@ -1283,7 +1284,8 @@ local function compileForVars(source, target)
     end
     -- iterator
     if not vm.getNode(source._iterator) then
-        selectNode(source._iterator,    source.exps, 1)
+        local _, exp = selectNode(source._iterator, source.exps, 1)
+        source._iterator.exp = exp
     end
     -- status
     if not vm.getNode(source._iterArgs[1]) then
@@ -1304,6 +1306,65 @@ local function compileForVars(source, target)
         end
     end
     return false
+end
+
+---@param func parser.object
+---@param args parser.object[]?
+---@return parser.object[]
+local function buildCallArgsWithImplicitSelf(func, args)
+    local newArgs = { func }
+    if args then
+        for i = 1, #args do
+            newArgs[#newArgs + 1] = args[i]
+        end
+    end
+    return newArgs
+end
+
+---@param uri uri
+---@param classGlobal vm.global
+---@param callback fun(set: parser.object)
+---@param mark? table<vm.global, boolean>
+local function eachClassSetWithExtends(uri, classGlobal, callback, mark)
+    mark = mark or {}
+    if mark[classGlobal] then
+        return
+    end
+    mark[classGlobal] = true
+    for _, set in ipairs(classGlobal:getSets(uri)) do
+        if set.type ~= 'doc.class' then
+            goto CONTINUE
+        end
+        callback(set)
+        for _, extend in ipairs(set.extends or {}) do
+            local baseName
+            if extend.type == 'doc.extends.name' then
+                baseName = extend[1]
+            elseif extend.type == 'doc.type.sign' and extend.node and extend.node[1] then
+                baseName = extend.node[1]
+            end
+            if baseName then
+                local baseClass = vm.getGlobal('type', baseName)
+                if baseClass then
+                    eachClassSetWithExtends(uri, baseClass, callback, mark)
+                end
+            end
+        end
+        ::CONTINUE::
+    end
+end
+
+---@param value vm.node.object
+---@return vm.global?
+local function getCallableClassGlobal(value)
+    if value.type == 'global' and value.cate == 'type' then
+        ---@cast value vm.global
+        return value
+    end
+    if value.type == 'doc.type.sign' and value.node and value.node[1] then
+        return vm.getGlobal('type', value.node[1])
+    end
+    return nil
 end
 
 ---@param func parser.object
@@ -1766,6 +1827,152 @@ local function bindReturnOfFunction(source, mfunc, index, args)
             vm.getNode(source):addOptional()
         end
     end
+end
+
+---@param source parser.object
+---@param func parser.object
+---@param operator parser.object
+---@param index integer
+local function bindReturnOfCallOperator(source, func, operator, index)
+    if operator.op[1] ~= 'call' or not operator.extends then
+        return
+    end
+
+    local uri = guide.getUri(source)
+    local actualFunc = func.exp or func
+    local receiverNode = vm.compileNode(actualFunc)
+    local expNode = operator.exp and vm.compileNode(operator.exp) or nil
+    local matched = false
+    local result = vm.createNode()
+    for receiver in receiverNode:eachObject() do
+        if receiver.type ~= 'doc.type.sign'
+        and not (receiver.type == 'global' and receiver.cate == 'type')
+        and receiver.type ~= 'doc.type.table'
+        and receiver.type ~= 'doc.type.array' then
+            goto CONTINUE
+        end
+        if expNode and vm.isSubType(uri, receiver, expNode) == false then
+            goto CONTINUE
+        end
+        matched = true
+        local resolvedExtends = operator.extends
+        if receiver.type == 'doc.type.sign'
+        and receiver.node
+        and receiver.node[1]
+        and receiver.signs then
+            local classGlobal = vm.getGlobal('type', receiver.node[1])
+            if classGlobal then
+                local genericMap = vm.getClassGenericMap(uri, classGlobal, receiver.signs)
+                if genericMap then
+                    resolvedExtends = vm.cloneObject(operator.extends, genericMap) or resolvedExtends
+                end
+            end
+            if resolvedExtends == operator.extends
+            and not operator.exp
+            and operator.extends.type == 'doc.type.sign'
+            and operator.extends.node
+            and operator.extends.node[1] == receiver.node[1]
+            and operator.extends.signs
+            and #operator.extends.signs == 1
+            and receiver.signs[1] then
+                local sign = operator.extends.signs[1]
+                if sign.type == 'doc.generic.name' or sign.type == 'doc.type.name' then
+                    resolvedExtends = receiver.signs[1]
+                end
+            end
+        end
+        if resolvedExtends == operator.extends and actualFunc.bindDocs then
+            for _, doc in ipairs(actualFunc.bindDocs) do
+                if doc.type ~= 'doc.type' then
+                    goto NEXT_DOC
+                end
+                for _, typeUnit in ipairs(doc.types) do
+                    if typeUnit.type ~= 'doc.type.sign'
+                    or not typeUnit.node
+                    or not typeUnit.node[1]
+                    or not typeUnit.signs then
+                        goto NEXT_TYPE_UNIT
+                    end
+                    local classGlobal = vm.getGlobal('type', typeUnit.node[1])
+                    if classGlobal then
+                        local genericMap = vm.getClassGenericMap(uri, classGlobal, typeUnit.signs)
+                        if genericMap then
+                            resolvedExtends = vm.cloneObject(operator.extends, genericMap) or resolvedExtends
+                            break
+                        end
+                        if resolvedExtends == operator.extends
+                        and not operator.exp
+                        and operator.extends.type == 'doc.type.sign'
+                        and operator.extends.node
+                        and operator.extends.node[1] == typeUnit.node[1]
+                        and operator.extends.signs
+                        and #operator.extends.signs == 1
+                        and typeUnit.signs[1] then
+                            local sign = operator.extends.signs[1]
+                            if sign.type == 'doc.generic.name' or sign.type == 'doc.type.name' then
+                                resolvedExtends = typeUnit.signs[1]
+                                break
+                            end
+                        end
+                    end
+                    ::NEXT_TYPE_UNIT::
+                end
+                if resolvedExtends ~= operator.extends then
+                    break
+                end
+                ::NEXT_DOC::
+            end
+        end
+        result:merge(vm.compileNode(resolvedExtends))
+        ::CONTINUE::
+    end
+    if not matched and actualFunc.bindDocs then
+        for _, doc in ipairs(actualFunc.bindDocs) do
+            if doc.type ~= 'doc.type' then
+                goto NEXT_BIND_DOC
+            end
+            for _, typeUnit in ipairs(doc.types) do
+                if typeUnit.type ~= 'doc.type.sign'
+                or not typeUnit.node
+                or not typeUnit.node[1] then
+                    goto NEXT_BIND_TYPE
+                end
+                if expNode and vm.isSubType(uri, typeUnit, expNode) == false then
+                    goto NEXT_BIND_TYPE
+                end
+                matched = true
+                local resolvedExtends = operator.extends
+                local classGlobal = vm.getGlobal('type', typeUnit.node[1])
+                if classGlobal and typeUnit.signs then
+                    local genericMap = vm.getClassGenericMap(uri, classGlobal, typeUnit.signs)
+                    if genericMap then
+                        resolvedExtends = vm.cloneObject(operator.extends, genericMap) or resolvedExtends
+                    end
+                end
+                if resolvedExtends == operator.extends
+                and not operator.exp
+                and operator.extends.type == 'doc.type.sign'
+                and operator.extends.node
+                and operator.extends.node[1] == typeUnit.node[1]
+                and operator.extends.signs
+                and #operator.extends.signs == 1
+                and typeUnit.signs
+                and typeUnit.signs[1] then
+                    local sign = operator.extends.signs[1]
+                    if sign.type == 'doc.generic.name' or sign.type == 'doc.type.name' then
+                        resolvedExtends = typeUnit.signs[1]
+                    end
+                end
+                result:merge(vm.compileNode(resolvedExtends))
+                ::NEXT_BIND_TYPE::
+            end
+            ::NEXT_BIND_DOC::
+        end
+    end
+    if not matched or result:isEmpty() then
+        return
+    end
+    vm.setNode(source, result)
 end
 
 local compilerSwitch = util.switch()
@@ -2245,17 +2452,35 @@ local compilerSwitch = util.switch()
                     goto CONTINUE
                 end
                 bindReturnOfFunction(source, nd, index, args)
-            elseif nd.type == 'global' and nd.cate == 'type' then
-                ---@cast nd vm.global
-                for _, set in ipairs(nd:getSets(guide.getUri(source))) do
-                    if set.type == 'doc.class' then
-                        for _, overload in ipairs(set.calls) do
-                            bindReturnOfFunction(source, overload.overload, index, args)
-                        end
-                    end
+            else
+                local classGlobal = getCallableClassGlobal(nd)
+                if not classGlobal then
+                    goto CONTINUE
                 end
+                local classArgs = buildCallArgsWithImplicitSelf(func, args)
+                eachClassSetWithExtends(guide.getUri(source), classGlobal, function (set)
+                    for _, overload in ipairs(set.calls) do
+                        bindReturnOfFunction(source, overload.overload, index, classArgs)
+                    end
+                end)
             end
             ::CONTINUE::
+        end
+        local node = vm.getNode(source)
+        if not node or not node:isTyped() then
+            local uri = guide.getUri(source)
+            for nd in funcNode:eachObject() do
+                local classGlobal = getCallableClassGlobal(nd)
+                if not classGlobal then
+                    goto NEXT_CALL_OPERATOR
+                end
+                eachClassSetWithExtends(uri, classGlobal, function (set)
+                    for _, operator in ipairs(set.operators or {}) do
+                        bindReturnOfCallOperator(source, func, operator, index)
+                    end
+                end)
+                ::NEXT_CALL_OPERATOR::
+            end
         end
     end)
     : case 'main'
@@ -2275,9 +2500,6 @@ local compilerSwitch = util.switch()
             local node = getReturn(vararg.node, source.sindex, vararg.args)
             if not node then
                 return
-            end
-            if not node:isTyped() then
-                node = vm.runOperator('call', vararg.node) or node
             end
             vm.setNode(source, node)
         end
@@ -2300,9 +2522,6 @@ local compilerSwitch = util.switch()
         local node = getReturn(source.node, 1, source.args)
         if not node then
             return
-        end
-        if not node:isTyped() then
-            node = vm.runOperator('call', source.node) or node
         end
         vm.setNode(source, node)
     end)

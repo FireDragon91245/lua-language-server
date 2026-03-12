@@ -1642,6 +1642,17 @@ local docSwitch = util.switch()
 
         nextSymbolOrError ':'
 
+        if op[1] == 'call' and not result.exp and checkToken('symbol', '(', 1) then
+            nextToken()
+            local exp = parseType(result)
+            if exp then
+                result.exp = exp
+                result.finish = exp.finish
+            end
+            nextSymbolOrError ')'
+            nextSymbolOrError ':'
+        end
+
         local ret = parseType(result)
         if ret then
             result.extends = ret

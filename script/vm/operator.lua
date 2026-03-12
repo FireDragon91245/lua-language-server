@@ -58,6 +58,116 @@ vm.OP_UNARY_MAP  = util.revertMap(unaryMap)
 vm.OP_BINARY_MAP = util.revertMap(binaryMap)
 vm.OP_OTHER_MAP  = util.revertMap(otherMap)
 
+---@param value vm.node.object
+---@return vm.node.object
+local function normalizeOperatorType(value)
+    if value.type == 'string'
+    or value.type == 'doc.type.string' then
+        return vm.declareGlobal('type', 'string')
+    end
+    return value
+end
+
+---@param exp parser.object
+---@return parser.object
+local function getCallOperatorResolveArg(exp)
+    local expNode = vm.compileNode(exp)
+    local filteredNode = vm.createNode()
+    for item in expNode:eachObject() do
+        if item.type == 'doc.type.sign'
+        or (item.type == 'global' and item.cate == 'type')
+        or item.type == 'doc.type.table'
+        or item.type == 'doc.type.array'
+        or item.type == 'string'
+        or item.type == 'doc.type.string' then
+            filteredNode:merge(item)
+        end
+    end
+    if filteredNode:isEmpty() then
+        return exp
+    end
+    ---@type parser.object
+    ---@diagnostic disable-next-line: missing-fields
+    local resolveArg = {
+        type = 'dummyfunc',
+        parent = exp.parent,
+        start = exp.start,
+        finish = exp.finish,
+    }
+    vm.setNode(resolveArg, filteredNode, true)
+    return resolveArg
+end
+
+---@param operator parser.object
+---@param exp parser.object
+---@return vm.node?
+local function getResolvedCallOperatorNode(operator, exp)
+    if not operator.extends then
+        return nil
+    end
+    if operator.exp then
+        local sign = vm.createSign()
+        sign:addSign(vm.compileNode(operator.exp))
+        local resolveArg = getCallOperatorResolveArg(exp)
+        ---@type parser.object[]
+        local resolveArgs = { resolveArg }
+        local resolved = sign:resolve(guide.getUri(operator), resolveArgs)
+        if resolved and next(resolved) then
+            local cloned = vm.cloneObject(operator.extends, resolved)
+            if cloned then
+                return vm.compileNode(cloned)
+            end
+        end
+    end
+    return vm.compileNode(operator.extends)
+end
+
+---@param uri uri
+---@param classGlobal vm.global
+---@param callback fun(set: parser.object)
+---@param mark? table<vm.global, boolean>
+local function eachClassSetWithExtends(uri, classGlobal, callback, mark)
+    mark = mark or {}
+    if mark[classGlobal] then
+        return
+    end
+    mark[classGlobal] = true
+    for _, set in ipairs(classGlobal:getSets(uri)) do
+        if set.type ~= 'doc.class' then
+            goto CONTINUE
+        end
+        callback(set)
+        for _, extend in ipairs(set.extends or {}) do
+            local baseName
+            if extend.type == 'doc.extends.name' then
+                baseName = extend[1]
+            elseif extend.type == 'doc.type.sign' and extend.node and extend.node[1] then
+                baseName = extend.node[1]
+            end
+            if baseName then
+                local baseClass = vm.getGlobal('type', baseName)
+                if baseClass then
+                    eachClassSetWithExtends(uri, baseClass, callback, mark)
+                end
+            end
+        end
+        ::CONTINUE::
+    end
+end
+
+---@param value vm.node.object
+---@return vm.global?
+local function getOperatorClassGlobal(value)
+    if value.type == 'global' and value.cate == 'type' then
+        ---@cast value vm.global
+        return value
+    end
+    if value.type == 'doc.type.sign' and value.node and value.node[1] then
+        return vm.getGlobal('type', value.node[1])
+    end
+    return nil
+end
+
 ---@param operators parser.object[]
 ---@param op string
 ---@param value? parser.object
@@ -103,11 +213,7 @@ function vm.runOperator(op, exp, value)
     local node = vm.compileNode(exp)
     local result
     for cVal in node:eachObject() do
-        local c = cVal
-        if c.type == 'string'
-        or c.type == 'doc.type.string' then
-            c = vm.declareGlobal('type', 'string')
-        end
+        local c = normalizeOperatorType(cVal)
         if c.type == 'global' and c.cate == 'type' then
             ---@cast c vm.global
             for _, set in ipairs(c:getSets(uri)) do
@@ -116,6 +222,54 @@ function vm.runOperator(op, exp, value)
                 end
             end
         end
+    end
+    return result
+end
+
+---@param exp parser.object
+---@return vm.node?
+function vm.runCallOperator(exp)
+    local uri = guide.getUri(exp)
+    local node = vm.compileNode(exp)
+    local result
+    for cVal in node:eachObject() do
+        local c = normalizeOperatorType(cVal)
+        local classGlobal = getOperatorClassGlobal(c)
+        if not classGlobal then
+            goto CONTINUE
+        end
+        eachClassSetWithExtends(uri, classGlobal, function (set)
+            if not set.operators or #set.operators == 0 then
+                return
+            end
+            for _, operator in ipairs(set.operators) do
+                if operator.op[1] ~= 'call' then
+                    goto NEXT_OPERATOR
+                end
+                if operator.exp then
+                    local expNode = vm.compileNode(operator.exp)
+                    local matched = false
+                    for receiver in node:eachObject() do
+                        if vm.isSubType(uri, receiver, expNode) then
+                            matched = true
+                            break
+                        end
+                    end
+                    if not matched then
+                        goto NEXT_OPERATOR
+                    end
+                end
+                local operatorNode = getResolvedCallOperatorNode(operator, exp)
+                if operatorNode then
+                    if not result then
+                        result = vm.createNode()
+                    end
+                    result:merge(operatorNode)
+                end
+                ::NEXT_OPERATOR::
+            end
+        end)
+        ::CONTINUE::
     end
     return result
 end

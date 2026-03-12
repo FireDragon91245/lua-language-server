@@ -2324,6 +2324,33 @@ for <?x?> in iter do
 end
 ]]
 
+TEST 'string|number' [[
+---@class itermeta<T>
+---@overload fun(self: iter<T>): T
+
+---@class iter<T>: itermeta<T>
+local iter_impl = {}
+
+---@type iter<string|number>
+local iter = iter_impl
+
+for <?value?> in iter do
+end
+]]
+
+TEST 'string|number' [[
+---@class itermeta<T>
+---@operator call:(iter<T>): T
+
+---@class iter<T>: itermeta<T>
+local iter_impl = {}
+
+---@type iter<string|number>
+local iter = iter_impl
+
+for <?value?> in iter do
+end
+]]
 TEST 'integer' [[
 local x
 

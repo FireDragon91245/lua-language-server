@@ -1046,3 +1046,228 @@ LuaDoc [[
         },
     },
 }
+
+LuaDoc [[
+---@class itermeta<T>
+---@operator call:(iter<T>): T
+]]
+{
+    type   = "doc",
+    start  = 0,
+    finish = 20000,
+    parent = "<IGNORE>",
+    [1]    = {
+        type            = "doc.class",
+        start           = 10,
+        finish          = 18,
+        range           = 21,
+        parent          = "<IGNORE>",
+        bindComments    = {
+        },
+        calls           = {
+        },
+        class           = {
+            type   = "doc.class.name",
+            start  = 10,
+            finish = 18,
+            parent = "<IGNORE>",
+            [1]    = "itermeta",
+        },
+        comment         = {
+            type   = "doc.tailcomment",
+            start  = 18,
+            finish = 21,
+            parent = "<IGNORE>",
+            text   = "<T>",
+        },
+        fields          = {
+        },
+        operators       = {
+            [1] = {
+                type            = "doc.operator",
+                start           = 10012,
+                finish          = 10030,
+                range           = 10030,
+                parent          = "<IGNORE>",
+                op              = {
+                    type   = "doc.operator.name",
+                    start  = 10013,
+                    finish = 10017,
+                    parent = "<IGNORE>",
+                    [1]    = "call",
+                },
+                exp             = {
+                    type        = "doc.type",
+                    start       = 10019,
+                    finish      = 10026,
+                    parent      = "<IGNORE>",
+                    firstFinish = 10026,
+                    types       = {
+                        [1] = {
+                            type   = "doc.type.sign",
+                            start  = 10019,
+                            finish = 10026,
+                            parent = "<IGNORE>",
+                            node   = "<IGNORE>",
+                            signs  = {
+                                [1] = {
+                                    type        = "doc.type",
+                                    start       = 10024,
+                                    finish      = 10025,
+                                    parent      = "<IGNORE>",
+                                    firstFinish = 10025,
+                                    types       = {
+                                        [1] = {
+                                            type   = "doc.type.name",
+                                            start  = 10024,
+                                            finish = 10025,
+                                            parent = "<IGNORE>",
+                                            [1]    = "T",
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                bindComments    = {
+                },
+                class           = "<LOOP>",
+                extends         = {
+                    type        = "doc.type",
+                    start       = 10029,
+                    finish      = 10030,
+                    parent      = "<IGNORE>",
+                    firstFinish = 10030,
+                    types       = {
+                        [1] = {
+                            type   = "doc.type.name",
+                            start  = 10029,
+                            finish = 10030,
+                            parent = "<IGNORE>",
+                            [1]    = "T",
+                        },
+                    },
+                },
+                originalComment = "<IGNORE>",
+            },
+        },
+        originalComment = "<IGNORE>",
+        signs           = {
+            [1] = {
+                type   = "doc.generic.name",
+                start  = 19,
+                finish = 20,
+                parent = "<IGNORE>",
+                [1]    = "T",
+            },
+        },
+    },
+    [2]    = {
+        type            = "doc.operator",
+        start           = 10012,
+        finish          = 10030,
+        range           = 10030,
+        parent          = "<IGNORE>",
+        op              = {
+            type   = "doc.operator.name",
+            start  = 10013,
+            finish = 10017,
+            parent = "<IGNORE>",
+            [1]    = "call",
+        },
+        exp             = {
+            type        = "doc.type",
+            start       = 10019,
+            finish      = 10026,
+            parent      = "<IGNORE>",
+            firstFinish = 10026,
+            types       = {
+                [1] = {
+                    type   = "doc.type.sign",
+                    start  = 10019,
+                    finish = 10026,
+                    parent = "<IGNORE>",
+                    node   = "<IGNORE>",
+                    signs  = {
+                        [1] = {
+                            type        = "doc.type",
+                            start       = 10024,
+                            finish      = 10025,
+                            parent      = "<IGNORE>",
+                            firstFinish = 10025,
+                            types       = {
+                                [1] = {
+                                    type   = "doc.type.name",
+                                    start  = 10024,
+                                    finish = 10025,
+                                    parent = "<IGNORE>",
+                                    [1]    = "T",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        bindComments    = {
+        },
+        class           = {
+            type            = "doc.class",
+            start           = 10,
+            finish          = 18,
+            range           = 21,
+            parent          = "<IGNORE>",
+            bindComments    = {
+            },
+            calls           = {
+            },
+            class           = {
+                type   = "doc.class.name",
+                start  = 10,
+                finish = 18,
+                parent = "<IGNORE>",
+                [1]    = "itermeta",
+            },
+            comment         = {
+                type   = "doc.tailcomment",
+                start  = 18,
+                finish = 21,
+                parent = "<IGNORE>",
+                text   = "<T>",
+            },
+            fields          = {
+            },
+            operators       = {
+                [1] = "<LOOP>",
+            },
+            originalComment = "<IGNORE>",
+            signs           = {
+                [1] = {
+                    type   = "doc.generic.name",
+                    start  = 19,
+                    finish = 20,
+                    parent = "<IGNORE>",
+                    [1]    = "T",
+                },
+            },
+        },
+        extends         = {
+            type        = "doc.type",
+            start       = 10029,
+            finish      = 10030,
+            parent      = "<IGNORE>",
+            firstFinish = 10030,
+            types       = {
+                [1] = {
+                    type   = "doc.type.name",
+                    start  = 10029,
+                    finish = 10030,
+                    parent = "<IGNORE>",
+                    [1]    = "T",
+                },
+            },
+        },
+        originalComment = "<IGNORE>",
+    },
+}
