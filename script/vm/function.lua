@@ -407,21 +407,60 @@ end
 
 ---@param param parser.object?
 ---@return boolean
-local function hasGenericSignParam(param)
+local function hasStructuredGenericParam(param)
     if not param then
         return false
     end
-    local found = false
-    guide.eachSourceType(param, 'doc.type.sign', function (_)
-        found = true
+    local hasGeneric = false
+    local hasContainer = false
+    guide.eachSourceType(param, 'doc.generic.name', function (_)
+        hasGeneric = true
     end)
-    if found then
+    if not hasGeneric then
+        return false
+    end
+    guide.eachSourceType(param, 'doc.type.sign', function (_)
+        hasContainer = true
+    end)
+    guide.eachSourceType(param, 'doc.type.array', function (_)
+        hasContainer = true
+    end)
+    guide.eachSourceType(param, 'doc.type.table', function (_)
+        hasContainer = true
+    end)
+    guide.eachSourceType(param, 'doc.type.function', function (_)
+        hasContainer = true
+    end)
+    return hasContainer
+end
+
+---@param param parser.object?
+---@return boolean
+local function isVariadicParam(param)
+    if not param then
+        return false
+    end
+    if param.type == '...' then
         return true
     end
-    guide.eachSourceType(param, 'doc.generic.name', function (_)
-        found = true
-    end)
-    return found
+    return param.name and param.name[1] == '...'
+end
+
+---@param uri uri
+---@param param parser.object?
+---@return integer
+local function getParamSpecificityScore(uri, param)
+    if not param then
+        return 0
+    end
+    local score = 0
+    if not vm.getInfer(param):hasAny(uri) then
+        score = score + 2
+    end
+    if isVariadicParam(param) then
+        score = score - 1
+    end
+    return score
 end
 
 ---@param func parser.object
@@ -456,6 +495,7 @@ local function calcFunctionMatchScore(uri, args, func)
         local arg = args[i]
         local originalParam = func.args[i]
         local param = getResolvedParamObject(uri, args, func, i) or originalParam
+        matchScore = matchScore + getParamSpecificityScore(uri, param)
         local defLiterals, literalsCount = vm.getLiterals(param)
         if defLiterals then
             for n in vm.compileNode(arg):eachObject() do
@@ -470,10 +510,10 @@ local function calcFunctionMatchScore(uri, args, func)
         end
         local argView = vm.getInfer(arg):view(uri)
         local paramView = vm.getInfer(param):view(uri)
-        if hasGenericSignParam(originalParam)
+        if hasStructuredGenericParam(originalParam)
         and arg.type ~= 'function'
         and argView and paramView and argView == paramView then
-            matchScore = matchScore + 1
+            matchScore = matchScore + 2
         end
     end
     return matchScore

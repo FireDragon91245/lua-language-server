@@ -84,3 +84,21 @@ end
 
 local <?list?> = list_of { 1, 'x', true }
 ]]
+
+TEST 'list<integer>' [[
+---@class list<T>
+---@class enumerable<T>
+
+---@generic T
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+function make_list(...)
+end
+
+---@type integer
+local test = 4
+
+local list = make_list(1, 2, 2, 3, 4, test, 5)
+local <?list2?> = make_list(list)
+]]
