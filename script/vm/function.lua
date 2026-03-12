@@ -448,14 +448,40 @@ end
 
 ---@param uri uri
 ---@param param parser.object?
+---@return boolean
+local function hasExplicitTableParam(uri, param)
+    if not param then
+        return false
+    end
+    local infer = vm.getInfer(param)
+    return infer:hasType(uri, 'table') and not infer:hasClass(uri)
+end
+
+---@param uri uri
+---@param arg parser.object?
+---@return boolean
+local function isPlainTableArg(uri, arg)
+    if not arg then
+        return false
+    end
+    local infer = vm.getInfer(arg)
+    return infer:hasType(uri, 'table') and not infer:hasClass(uri)
+end
+
+---@param uri uri
+---@param arg parser.object?
+---@param param parser.object?
 ---@return integer
-local function getParamSpecificityScore(uri, param)
+local function getParamSpecificityScore(uri, arg, param)
     if not param then
         return 0
     end
     local score = 0
     if not vm.getInfer(param):hasAny(uri) then
         score = score + 2
+    end
+    if isPlainTableArg(uri, arg) and hasExplicitTableParam(uri, param) then
+        score = score + 3
     end
     if isVariadicParam(param) then
         score = score - 1
@@ -495,7 +521,7 @@ local function calcFunctionMatchScore(uri, args, func)
         local arg = args[i]
         local originalParam = func.args[i]
         local param = getResolvedParamObject(uri, args, func, i) or originalParam
-        matchScore = matchScore + getParamSpecificityScore(uri, param)
+        matchScore = matchScore + getParamSpecificityScore(uri, arg, param)
         local defLiterals, literalsCount = vm.getLiterals(param)
         if defLiterals then
             for n in vm.compileNode(arg):eachObject() do
@@ -519,6 +545,31 @@ local function calcFunctionMatchScore(uri, args, func)
     return matchScore
 end
 
+---@param uri uri
+---@param args parser.object[]
+---@param funcs parser.object[]
+---@return parser.object[]
+local function filterExplicitTableOverloads(uri, args, funcs)
+    local filtered = funcs
+    for i = 1, #args do
+        if not isPlainTableArg(uri, args[i]) then
+            goto CONTINUE
+        end
+        local explicit = {}
+        for _, func in ipairs(filtered) do
+            local param = func.args and func.args[i]
+            if hasExplicitTableParam(uri, param) then
+                explicit[#explicit + 1] = func
+            end
+        end
+        if #explicit > 0 then
+            filtered = explicit
+        end
+        ::CONTINUE::
+    end
+    return filtered
+end
+
 ---@param func parser.object
 ---@param args? parser.object[]
 ---@return parser.object[]?
@@ -531,6 +582,10 @@ function vm.getExactMatchedFunctions(func, args)
         return funcs
     end
     local uri = guide.getUri(func)
+    funcs = filterExplicitTableOverloads(uri, args, funcs)
+    if #funcs == 1 then
+        return funcs
+    end
     local matchScores = {}
     for i, n in ipairs(funcs) do
         matchScores[i] = calcFunctionMatchScore(uri, args, n)

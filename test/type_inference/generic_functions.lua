@@ -186,3 +186,39 @@ local <?result?> = select(source, function (item)
     return tostring(item)
 end)
 ]]
+
+TEST 'list<any>' [[
+---@class list<T>
+---@class enumerable<T>
+
+---@generic T
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(tbl: table): list<any>
+function make_list(...)
+end
+
+---@type table
+local source = {}
+
+local <?result?> = make_list(source)
+]]
+
+TEST 'list<integer>' [[
+---@class list<T>
+---@class enumerable<T>
+
+---@generic T
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(tbl: table): list<any>
+function make_list(...)
+end
+
+---@type list<integer>
+local source = {}
+
+local <?result?> = make_list(source)
+]]
