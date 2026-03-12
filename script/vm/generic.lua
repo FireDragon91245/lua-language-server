@@ -1,3 +1,4 @@
+local guide   = require 'parser.guide'
 ---@class vm
 local vm      = require 'vm.vm'
 
@@ -129,19 +130,33 @@ local function cloneObject(source, resolved)
         return newDocFunc
     end
     if source.type == 'doc.type.sign' and source.signs then
-        local needsClone = false
-        for _, sign in ipairs(source.signs) do
-            if sign.type == 'doc.type' then
-                for _, tp in ipairs(sign.types) do
-                    if tp.type == 'doc.type.name' and resolved[tp[1]] then
-                        needsClone = true
+        local isClassGeneric = false
+        if source.node and source.node[1] then
+            local globalVar = vm.getGlobal('type', source.node[1])
+            if globalVar then
+                for _, set in ipairs(globalVar:getSets(guide.getUri(source))) do
+                    if set.type == 'doc.class' and set.signs then
+                        isClassGeneric = true
                         break
                     end
                 end
-            elseif sign.type == 'doc.type.name' and resolved[sign[1]] then
-                needsClone = true
             end
-            if needsClone then break end
+        end
+        local needsClone = false
+        if isClassGeneric then
+            for _, sign in ipairs(source.signs) do
+                if sign.type == 'doc.type' then
+                    for _, tp in ipairs(sign.types) do
+                        if (tp.type == 'doc.type.name' or tp.type == 'doc.generic.name') and resolved[tp[1]] then
+                            needsClone = true
+                            break
+                        end
+                    end
+                elseif (sign.type == 'doc.type.name' or sign.type == 'doc.generic.name') and resolved[sign[1]] then
+                    needsClone = true
+                end
+                if needsClone then break end
+            end
         end
         if needsClone then
             local newSign = {

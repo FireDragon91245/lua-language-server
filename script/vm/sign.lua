@@ -109,6 +109,25 @@ function mt:resolve(uri, args)
             end
             return
         end
+        if object.type == 'doc.type.sign' then
+            if not object.node or not object.node[1] or not object.signs then
+                return
+            end
+            for n in node:eachObject() do
+                if n.type == 'doc.type.sign'
+                and n.node
+                and n.node[1] == object.node[1]
+                and n.signs then
+                    for i, sign in ipairs(object.signs) do
+                        local resolvedSign = n.signs[i]
+                        if resolvedSign then
+                            resolve(sign, vm.compileNode(resolvedSign))
+                        end
+                    end
+                end
+            end
+            return
+        end
         if object.type == 'doc.type.table' then
             for _, ufield in ipairs(object.fields) do
                 local ufieldNode = vm.compileNode(ufield.name)
@@ -191,7 +210,8 @@ function mt:resolve(uri, args)
             end
             if obj.type == 'doc.type.table'
             or obj.type == 'doc.type.function'
-            or obj.type == 'doc.type.array' then
+            or obj.type == 'doc.type.array'
+            or obj.type == 'doc.type.sign' then
                 ---@cast obj parser.object
                 local hasGeneric
                 guide.eachSourceType(obj, 'doc.generic.name', function (src)

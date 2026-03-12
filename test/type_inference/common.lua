@@ -4988,10 +4988,8 @@ local w
 local <?result?> = w:unwrap()
 ]]
 
--- Issue #1856: Generic class display format
--- Current behavior shows list<<T>>|{...} - the <<T>> indicates an unresolved generic
--- The resolved table type is also shown
-TEST 'list<<T>>|{ [integer]: string }' [[
+-- Generic class display should carry the concrete sign through call resolution.
+TEST 'list<string>|{ [integer]: string }' [[
 ---@class list<T>: {[integer]:T}
 
 ---@generic T

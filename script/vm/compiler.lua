@@ -1619,7 +1619,7 @@ local function bindReturnOfFunction(source, mfunc, index, args)
     local returnNode = vm.compileNode(returnObject)
 
     local selfGenericResolved = nil
-    if source.func and source.func.type == 'getmethod' and mfunc.type == 'function' and mfunc.bindDocs then
+    if source.func and source.func.type == 'getmethod' and (mfunc.type == 'function' or mfunc.type == 'doc.type.function') and mfunc.bindDocs then
         local receiver = source.func.node
         if receiver then
             local receiverNode = vm.compileNode(receiver)
@@ -1686,7 +1686,7 @@ local function bindReturnOfFunction(source, mfunc, index, args)
         end
     end
 
-    if mfunc.type == 'function' then
+    if mfunc.type == 'function' or mfunc.type == 'doc.type.function' then
         local hasUnresolvedGeneric = false
         for rnode in returnNode:eachObject() do
             if vm.isGenericUnsolved(rnode) then
@@ -1830,8 +1830,19 @@ local compilerSwitch = util.switch()
 
         local parent = source.parent
 
-        if source.bindDocs then
-            for _, doc in ipairs(source.bindDocs) do
+        local docs = source.bindDocs
+        if not docs and parent then
+            if parent.type == 'setglobal'
+            or parent.type == 'setlocal'
+            or parent.type == 'setfield'
+            or parent.type == 'setmethod'
+            or parent.type == 'setindex'
+            or parent.type == 'local' then
+                docs = parent.bindDocs
+            end
+        end
+        if docs then
+            for _, doc in ipairs(docs) do
                 if doc.type == 'doc.overload' then
                     vm.setNode(source, vm.compileNode(doc))
                 end
@@ -2224,11 +2235,15 @@ local compilerSwitch = util.switch()
             return
         end
         local funcNode = vm.compileNode(func)
+        local matchedFuncs = vm.getExactMatchedFunctions(func, args)
         ---@type vm.node?
         for nd in funcNode:eachObject() do
             if nd.type == 'function'
             or nd.type == 'doc.type.function' then
                 ---@cast nd parser.object
+                if matchedFuncs and not util.arrayHas(matchedFuncs, nd) then
+                    goto CONTINUE
+                end
                 bindReturnOfFunction(source, nd, index, args)
             elseif nd.type == 'global' and nd.cate == 'type' then
                 ---@cast nd vm.global
@@ -2240,6 +2255,7 @@ local compilerSwitch = util.switch()
                     end
                 end
             end
+            ::CONTINUE::
         end
     end)
     : case 'main'

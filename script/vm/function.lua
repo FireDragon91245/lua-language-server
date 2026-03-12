@@ -3,6 +3,27 @@ local vm    = require 'vm.vm'
 local guide = require 'parser.guide'
 local util  = require 'utility'
 
+---@param func parser.object
+---@return parser.object[]?
+local function getFunctionDocs(func)
+    if func.bindDocs then
+        return func.bindDocs
+    end
+    local parent = func.parent
+    if not parent then
+        return nil
+    end
+    if parent.type == 'setglobal'
+    or parent.type == 'setlocal'
+    or parent.type == 'setfield'
+    or parent.type == 'setmethod'
+    or parent.type == 'setindex'
+    or parent.type == 'local' then
+        return parent.bindDocs
+    end
+    return nil
+end
+
 ---@param arg parser.object
 ---@return parser.object?
 local function getDocParam(arg)
@@ -335,17 +356,27 @@ end
 
 ---@param uri uri
 ---@param args parser.object[]
+---@param func parser.object
 ---@return boolean
-local function isAllParamMatched(uri, args, params)
+local function isAllParamMatched(uri, args, params, func)
     if not params then
         return false
+    end
+    local resolved
+    local sign = vm.getSign(func)
+    if sign then
+        resolved = sign:resolve(uri, args)
     end
     for i = 1, #args do
         if not params[i] then
             break
         end
         local argNode = vm.compileNode(args[i])
-        local defNode = vm.compileNode(params[i])
+        local defObj = params[i]
+        if resolved and next(resolved) then
+            defObj = vm.cloneObject(defObj, resolved) or defObj
+        end
+        local defNode = vm.compileNode(defObj)
         if not vm.canCastType(uri, defNode, argNode) then
             return false
         end
@@ -356,17 +387,75 @@ end
 ---@param uri uri
 ---@param args parser.object[]
 ---@param func parser.object
+---@param index integer
+---@return parser.object?
+local function getResolvedParamObject(uri, args, func, index)
+    local param = func.args and func.args[index]
+    if not param then
+        return nil
+    end
+    local sign = vm.getSign(func)
+    if not sign then
+        return param
+    end
+    local resolved = sign:resolve(uri, args)
+    if not resolved or not next(resolved) then
+        return param
+    end
+    return vm.cloneObject(param, resolved) or param
+end
+
+---@param param parser.object?
+---@return boolean
+local function hasGenericSignParam(param)
+    if not param then
+        return false
+    end
+    local found = false
+    guide.eachSourceType(param, 'doc.type.sign', function (_)
+        found = true
+    end)
+    if found then
+        return true
+    end
+    guide.eachSourceType(param, 'doc.generic.name', function (_)
+        found = true
+    end)
+    return found
+end
+
+---@param func parser.object
+---@return boolean
+local function hasExplicitReturns(func)
+    if func.type == 'doc.type.function' then
+        return func.returns and #func.returns > 0 or false
+    end
+    if func.type == 'function' and func.bindDocs then
+        for _, doc in ipairs(func.bindDocs) do
+            if doc.type == 'doc.return' and doc.returns and #doc.returns > 0 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+---@param uri uri
+---@param args parser.object[]
+---@param func parser.object
 ---@return number
 local function calcFunctionMatchScore(uri, args, func)
     if vm.isVarargFunctionWithOverloads(func)
     or vm.isFunctionWithOnlyOverloads(func)
-    or not isAllParamMatched(uri, args, func.args)
+    or not isAllParamMatched(uri, args, func.args, func)
     then
         return -1
     end
     local matchScore = 0
     for i = 1, math.min(#args, #func.args) do
-        local arg, param = args[i], func.args[i]
+        local arg = args[i]
+        local originalParam = func.args[i]
+        local param = getResolvedParamObject(uri, args, func, i) or originalParam
         local defLiterals, literalsCount = vm.getLiterals(param)
         if defLiterals then
             for n in vm.compileNode(arg):eachObject() do
@@ -378,6 +467,13 @@ local function calcFunctionMatchScore(uri, args, func)
                     break
                 end
             end
+        end
+        local argView = vm.getInfer(arg):view(uri)
+        local paramView = vm.getInfer(param):view(uri)
+        if hasGenericSignParam(originalParam)
+        and arg.type ~= 'function'
+        and argView and paramView and argView == paramView then
+            matchScore = matchScore + 1
         end
     end
     return matchScore
@@ -449,9 +545,26 @@ function vm.getMatchedFunctions(func, args, mark)
 
     if #matched == 0 then
         return nil
-    else
-        return matched
     end
+
+    local overloadMatched = {}
+    local hasOverloadedImpl = false
+    for _, n in ipairs(matched) do
+        if n.type == 'doc.type.function' then
+            overloadMatched[#overloadMatched+1] = n
+        elseif n.type == 'function' and vm.isFunctionWithOnlyOverloads(n) then
+            hasOverloadedImpl = true
+        end
+    end
+    if hasOverloadedImpl and #overloadMatched > 0 then
+        for _, overload in ipairs(overloadMatched) do
+            if hasExplicitReturns(overload) then
+                return overloadMatched
+            end
+        end
+    end
+
+    return matched
 end
 
 ---@param func table
@@ -477,11 +590,12 @@ function vm.isVarargFunctionWithOverloads(func)
             return false
         end
     end
-    if not func.bindDocs then
+    local docs = getFunctionDocs(func)
+    if not docs then
         func._varargFunction = false
         return false
     end
-    for _, doc in ipairs(func.bindDocs) do
+    for _, doc in ipairs(docs) do
         if doc.type == 'doc.overload' then
             func._varargFunction = true
             return true
@@ -501,12 +615,13 @@ function vm.isFunctionWithOnlyOverloads(func)
         return func._onlyOverloadFunction
     end
 
-    if not func.bindDocs then
+    local docs = getFunctionDocs(func)
+    if not docs then
         func._onlyOverloadFunction = false
         return false
     end
     local hasOverload = false
-    for _, doc in ipairs(func.bindDocs) do
+    for _, doc in ipairs(docs) do
         if doc.type == 'doc.overload' then
             hasOverload = true
         elseif doc.type == 'doc.param'
@@ -518,7 +633,7 @@ function vm.isFunctionWithOnlyOverloads(func)
         end
     end
     func._onlyOverloadFunction = hasOverload
-    return true
+    return hasOverload
 end
 
 ---@param func parser.object
