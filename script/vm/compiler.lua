@@ -1123,6 +1123,74 @@ end
 ---@param fixIndex integer
 ---@param myIndex  integer
 local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
+    ---@param endIndex integer
+    ---@return parser.object[]
+    local function buildResolveArgs(endIndex)
+        local args = {}
+        if call.node and call.node.type == 'getmethod' then
+            local receiver = call.node.node
+            if receiver and fixIndex == 0 and endIndex >= 1 then
+                args[#args+1] = receiver
+                for i = 2, endIndex do
+                    args[#args+1] = call.args[i]
+                end
+                return args
+            end
+        end
+        for i = fixIndex + 1, endIndex do
+            args[#args+1] = call.args[i]
+        end
+        return args
+    end
+
+    ---@return table<string, vm.node>?
+    local function buildReceiverGenericMap()
+        if not call.node or call.node.type ~= 'getmethod' then
+            return nil
+        end
+        local receiver = call.node.node
+        if receiver and receiver.type == 'getlocal' then
+            receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+        end
+        if not receiver then
+            return nil
+        end
+        local receiverNode = vm.compileNode(receiver)
+        for item in receiverNode:eachObject() do
+            if item.type == 'doc.type.sign' and item.node and item.node[1] and item.signs then
+                local classGlobal = vm.getGlobal('type', item.node[1])
+                if classGlobal then
+                    local genericMap = vm.getClassGenericMap(guide.getUri(call), classGlobal, item.signs)
+                    if genericMap then
+                        return genericMap
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    ---@return parser.object?
+    local function buildReceiverTypeSource()
+        if not call.node or call.node.type ~= 'getmethod' then
+            return nil
+        end
+        local receiver = call.node.node
+        if receiver and receiver.type == 'getlocal' then
+            receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+        end
+        if not receiver or not receiver.bindDocs then
+            return nil
+        end
+        for i = #receiver.bindDocs, 1, -1 do
+            local doc = receiver.bindDocs[i]
+            if doc.type == 'doc.type' or doc.type == 'doc.class' then
+                return doc
+            end
+        end
+        return nil
+    end
+
     ---@type integer?, table<any, boolean>?
     local eventIndex, eventMap
     if call.args then
@@ -1141,6 +1209,7 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
 
     ---@param n parser.object
     local function dealDocFunc(n)
+        local sign = vm.getSign(n)
         local myEvent
         if n.args[eventIndex] then
             if eventMap and myIndex > eventIndex then
@@ -1173,9 +1242,63 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
         or eventMap[myEvent[1]] then
             local farg = getFuncArg(n, myIndex)
             if farg then
-                for fn in vm.compileNode(farg):eachObject() do
+                ---@type parser.object|vm.generic
+                local resolvedArg = farg
+                ---@type parser.object|vm.generic?
+                local resolvedSelfArg
+                if sign then
+                    local args = buildResolveArgs(myIndex - 1)
+                    local resolved = sign:resolve(guide.getUri(call), args)
+                    local receiverGenericMap = buildReceiverGenericMap()
+                    if receiverGenericMap then
+                        resolved = resolved or {}
+                        for name, node in pairs(receiverGenericMap) do
+                            if not resolved[name] then
+                                resolved[name] = node
+                            end
+                        end
+                    end
+                    if resolved and next(resolved) then
+                        resolvedArg = vm.cloneObject(farg, resolved) or farg
+                        local selfArg = getFuncArg(n, 1)
+                        if selfArg then
+                            resolvedSelfArg = vm.cloneObject(selfArg, resolved) or selfArg
+                        end
+                    end
+                end
+                for fn in vm.compileNode(resolvedArg):eachObject() do
                     if isValidCallArgNode(arg, fn) then
-                        vm.setNode(arg, fn)
+                        local outputFn = fn
+                        if fn.type == 'doc.type.function' and resolvedSelfArg then
+                            local receiverTypeSource = buildReceiverTypeSource()
+                            local firstArg = fn.args and fn.args[1]
+                            local selfView = vm.getInfer(resolvedSelfArg):view(guide.getUri(call))
+                            local firstArgView = firstArg and vm.getInfer(firstArg):view(guide.getUri(call)) or nil
+                            if receiverTypeSource and firstArg and selfView and firstArgView and selfView == firstArgView then
+                                local specialized = {
+                                    type = fn.type,
+                                    start = fn.start,
+                                    finish = fn.finish,
+                                    parent = fn.parent,
+                                    args = {},
+                                    returns = fn.returns,
+                                    signs = fn.signs,
+                                }
+                                for i, cbArg in ipairs(fn.args) do
+                                    specialized.args[i] = {
+                                        type = cbArg.type,
+                                        start = cbArg.start,
+                                        finish = cbArg.finish,
+                                        parent = specialized,
+                                        name = cbArg.name,
+                                        extends = i == 1 and receiverTypeSource or cbArg.extends,
+                                        optional = cbArg.optional,
+                                    }
+                                end
+                                outputFn = specialized
+                            end
+                        end
+                        vm.setNode(arg, outputFn)
                     end
                 end
             end
@@ -1193,10 +1316,7 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                         ---@cast fn parser.object
                         if sign then
                             local generic = vm.createGeneric(fn, sign)
-                            local args    = {}
-                            for i = fixIndex + 1, myIndex - 1 do
-                                args[#args+1] = call.args[i]
-                            end
+                            local args    = buildResolveArgs(myIndex - 1)
                             local resolvedNode = generic:resolve(guide.getUri(call), args)
                             vm.setNode(arg, resolvedNode)
                             goto CONTINUE
@@ -1245,7 +1365,32 @@ function vm.compileCallArg(arg, call, index)
         end
     end
 
-    local callNode = vm.compileNode(call.node)
+    local callNode
+    if call.node.type == 'getmethod' then
+        local key = guide.getKeyName(call.node)
+        if key then
+            local receiver = call.node.node
+            if receiver and receiver.type == 'getlocal' then
+                receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+            end
+            local methodNode = vm.createNode()
+            local function mergeMethodCandidates(source)
+                vm.compileByParentNode(source, key, function (src)
+                    methodNode:merge(vm.compileNode(src))
+                end)
+            end
+            mergeMethodCandidates(receiver)
+            if receiver and receiver.type == 'local' and receiver.value then
+                mergeMethodCandidates(receiver.value)
+            end
+            if not methodNode:isEmpty() then
+                callNode = methodNode
+            end
+        end
+    end
+    if not callNode then
+        callNode = vm.compileNode(call.node)
+    end
     compileCallArgNode(arg, call, callNode, 0, index)
 
     if call.node.special == 'pcall'

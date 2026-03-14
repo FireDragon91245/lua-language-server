@@ -288,6 +288,27 @@ local list3 = list
 local <?list4?> = list3:addtransform("1")
 ]]
 
+TEST 'list<string>' [[
+---@class enumerable<T>
+---@class list<T>: enumerable<T>
+
+local linq = {}
+
+---@generic T, U
+---@overload fun(self: enumerable<T>, consumer: fun(enum: enumerable<T>): (U)): U
+---@overload fun(self: enumerable<T>, constructor: fun(): (U), consumer: fun(acc: U, item: T)): U
+---@overload fun(self: enumerable<T>, constructor: fun(): (U), consumer: fun(acc: U, item: T), finalizer: fun(acc: U): (U)): U
+function list:collect(...)
+end
+
+---@type list<string>
+local list3 = list
+
+local value = list3:collect(function(<?enum?>)
+    return ""
+end)
+]]
+
 TEST 'list<integer>' [[
 ---@class list<T>
 ---@class enumerable<T>
