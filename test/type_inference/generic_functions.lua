@@ -205,6 +205,71 @@ local source = {}
 local <?result?> = make_list(source)
 ]]
 
+TEST 'integer' [[
+---@generic T
+---@param item `T`
+---@return T
+local function id(item)
+    return item
+end
+
+local <?value?> = id(1)
+]]
+
+TEST 'list<string|integer>' [[
+---@class list<T>
+local list = {}
+
+---@generic T, U
+---@param self list<T>
+---@param item `U`
+---@return list<T|U>
+function list:addtransform(item)
+    return self
+end
+
+---@type list<string>
+local list3 = list
+
+local <?list4?> = list3:addtransform(1)
+]]
+
+TEST 'list<number>' [[
+---@class list<T>
+local list = {}
+
+---@generic T, U
+---@param self list<T>
+---@param item `U`
+---@return list<T|U>
+function list:addtransform(item)
+    return self
+end
+
+---@type list<number>
+local list3 = list
+
+local <?list4?> = list3:addtransform(1)
+]]
+
+TEST 'list<string>' [[
+---@class list<T>
+local list = {}
+
+---@generic T, U
+---@param self list<T>
+---@param item `U`
+---@return list<T|U>
+function list:addtransform(item)
+    return self
+end
+
+---@type list<string>
+local list3 = list
+
+local <?list4?> = list3:addtransform("1")
+]]
+
 TEST 'list<integer>' [[
 ---@class list<T>
 ---@class enumerable<T>

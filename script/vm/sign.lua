@@ -64,9 +64,20 @@ function mt:resolve(uri, args)
             if object.literal then
                 -- 'number' -> `T`
                 for n in node:eachObject() do
+                    local typeName
                     if n.type == 'string' then
                         ---@cast n parser.object
-                        local type = vm.declareGlobal('type', object.pattern and object.pattern:format(n[1]) or n[1], guide.getUri(n))
+                        local candidate = object.pattern and object.pattern:format(n[1]) or n[1]
+                        if guide.isBasicType(candidate) or vm.getGlobal('type', candidate) then
+                            typeName = candidate
+                        else
+                            typeName = 'string'
+                        end
+                    else
+                        typeName = vm.getInfer(n):view(uri)
+                    end
+                    if typeName and typeName ~= 'unknown' then
+                        local type = vm.declareGlobal('type', typeName, guide.getUri(n))
                         resolved[key] = vm.createNode(type, resolved[key])
                     end
                 end

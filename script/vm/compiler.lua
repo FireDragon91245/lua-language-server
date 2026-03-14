@@ -1792,12 +1792,26 @@ local function bindReturnOfFunction(source, mfunc, index, args)
                                     if doc.type == 'doc.return' then
                                         for _, rtn in ipairs(doc.returns) do
                                             if rtn.returnIndex == index then
-                                                local newRtn = vm.cloneObject(rtn, genericMap)
+                                                local resolvedMap = genericMap
+                                                local sign = vm.getSign(mfunc)
+                                                if sign and resolveArgs and #resolveArgs > 0 then
+                                                    local callResolved = sign:resolve(guide.getUri(source), resolveArgs)
+                                                    if callResolved and next(callResolved) then
+                                                        resolvedMap = {}
+                                                        for k, v in pairs(callResolved) do
+                                                            resolvedMap[k] = v
+                                                        end
+                                                        for k, v in pairs(genericMap) do
+                                                            resolvedMap[k] = v
+                                                        end
+                                                    end
+                                                end
+                                                local newRtn = vm.cloneObject(rtn, resolvedMap)
                                                 if newRtn then
                                                     returnNode = vm.compileNode(newRtn)
                                                     for rnode in returnNode:eachObject() do
                                                         if rnode.type == 'generic' then
-                                                            returnNode = rnode:resolve(guide.getUri(source), args)
+                                                            returnNode = rnode:resolve(guide.getUri(source), resolveArgs)
                                                             break
                                                         end
                                                     end
