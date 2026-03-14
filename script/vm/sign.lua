@@ -73,12 +73,16 @@ function mt:resolve(uri, args)
                         else
                             typeName = 'string'
                         end
+                        if typeName and typeName ~= 'unknown' then
+                            local type = vm.declareGlobal('type', typeName, guide.getUri(n))
+                            resolved[key] = vm.createNode(type, resolved[key])
+                        end
                     else
                         typeName = vm.getInfer(n):view(uri)
-                    end
-                    if typeName and typeName ~= 'unknown' then
-                        local type = vm.declareGlobal('type', typeName, guide.getUri(n))
-                        resolved[key] = vm.createNode(type, resolved[key])
+                        if typeName and guide.isBasicType(typeName) and typeName ~= 'unknown' then
+                            local type = vm.declareGlobal('type', typeName, guide.getUri(n))
+                            resolved[key] = vm.createNode(type, resolved[key])
+                        end
                     end
                 end
             else

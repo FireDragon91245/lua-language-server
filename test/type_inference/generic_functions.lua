@@ -169,6 +169,24 @@ end
 local <?list?> = make_list(1.1, 2.2, 3.3)
 ]]
 
+TEST 'list<any>' [[
+---@class list<T>
+---@class enumerable<T>
+
+local linq = {}
+
+---@generic T
+---@overload fun(): list<any>
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(tbl: table): list<any>
+function linq.list(...)
+end
+
+local <?result?> = linq.list()
+]]
+
 TEST 'enumerable<string>' [[
 ---@class enumerable<T>
 

@@ -570,19 +570,49 @@ local function filterExplicitTableOverloads(uri, args, funcs)
     return filtered
 end
 
+---@param args parser.object[]
+---@param funcs parser.object[]
+---@return parser.object[]
+local function filterExactArityOverloads(args, funcs)
+    local amin, amax = vm.countList(args)
+    if amin ~= amax then
+        return funcs
+    end
+    local exact = {}
+    for _, func in ipairs(funcs) do
+        local min, max = vm.countParamsOfFunction(func)
+        if min == amin and max == amax then
+            exact[#exact + 1] = func
+        end
+    end
+    if #exact > 0 then
+        for _, func in ipairs(exact) do
+            if hasExplicitReturns(func) then
+                return exact
+            end
+        end
+    end
+    return funcs
+end
+
 ---@param func parser.object
 ---@param args? parser.object[]
 ---@return parser.object[]?
 function vm.getExactMatchedFunctions(func, args)
     local funcs = vm.getMatchedFunctions(func, args)
-    if not args or not funcs then
+    if not funcs then
         return funcs
     end
+    args = args or {}
     if #funcs == 1 then
         return funcs
     end
     local uri = guide.getUri(func)
     funcs = filterExplicitTableOverloads(uri, args, funcs)
+    if #funcs == 1 then
+        return funcs
+    end
+    funcs = filterExactArityOverloads(args, funcs)
     if #funcs == 1 then
         return funcs
     end

@@ -1661,6 +1661,7 @@ end
 local function bindReturnOfFunction(source, mfunc, index, args)
     local returnObject = vm.getReturnOfFunction(mfunc, index)
     if not returnObject then
+        vm.setNode(source, vm.declareGlobal('type', 'nil'))
         return
     end
 
