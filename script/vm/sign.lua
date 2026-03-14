@@ -11,6 +11,49 @@ local mt = {}
 mt.__index = mt
 mt.type = 'sign'
 
+---@param uri uri?
+---@param source parser.object|vm.node|vm.node.object|any
+---@return string
+local function debugCollectView(uri, source)
+    if not source then
+        return 'nil'
+    end
+    if type(source) ~= 'table' then
+        return tostring(source)
+    end
+    if source.type == 'vm.node' then
+        local ok, view = pcall(vm.getInfer(source).view, vm.getInfer(source), uri)
+        if ok and view then
+            return view
+        end
+        return 'vm.node'
+    end
+    local ok, view = pcall(vm.getInfer(source).view, vm.getInfer(source), uri)
+    if ok and view then
+        return view
+    end
+    return source.type or tostring(source)
+end
+
+---@param uri uri?
+---@param tag string
+---@param message string
+local function debugCollectTrace(uri, tag, message)
+    local state = rawget(_G, 'DEBUG_COLLECT_GENERIC')
+    if not state then
+        return
+    end
+    if state.onlyUri and uri ~= state.onlyUri then
+        return
+    end
+    local traces = state.traces
+    if not traces then
+        traces = {}
+        state.traces = traces
+    end
+    traces[#traces+1] = ('[%s] %s'):format(tag, message)
+end
+
 ---@param node vm.node
 function mt:addSign(node)
     self.signList[#self.signList+1] = node
@@ -39,6 +82,72 @@ function mt:resolve(uri, args)
     ---@type table<string, boolean>
     local visited = {}
 
+    ---@param call parser.object
+    ---@param returnIndex integer
+    ---@return vm.node?
+    local function resolveCallExpression(call, returnIndex)
+        local resultNode = vm.createNode()
+        local hasResolved = false
+        local callNode = vm.compileNode(call.node)
+        if (call.node.type == 'getfield' or call.node.type == 'getmethod') and vm.getInfer(callNode):view(uri) == 'unknown' then
+            local key = guide.getKeyName(call.node)
+            if key then
+                local rebuiltCallNode = vm.createNode()
+                local parentNode = call.node.node
+                if parentNode and parentNode.type == 'getlocal' then
+                    parentNode = guide.getLocal(parentNode, parentNode[1], parentNode.start) or parentNode
+                end
+                local function mergeCandidates(source)
+                    vm.compileByParentNode(source, key, function (src)
+                        rebuiltCallNode:merge(vm.compileNode(src))
+                    end)
+                end
+                if parentNode then
+                    mergeCandidates(parentNode)
+                end
+                if parentNode and parentNode.type == 'local' and parentNode.value then
+                    mergeCandidates(parentNode.value)
+                end
+                if not rebuiltCallNode:isEmpty() then
+                    callNode = rebuiltCallNode
+                end
+            end
+        end
+        debugCollectTrace(uri, 'sign.resolve.call-fallback.callee', ('returnIndex=%d callee=%s'):format(returnIndex, debugCollectView(uri, callNode)))
+        for funcNode in callNode:eachObject() do
+            if funcNode.type == 'function' or funcNode.type == 'doc.type.function' then
+                ---@cast funcNode parser.object
+                local returnObject = vm.getReturnOfFunction(funcNode, returnIndex)
+                if returnObject then
+                    debugCollectTrace(uri, 'sign.resolve.call-fallback.return', ('func=%s return=%s'):format(funcNode.type, debugCollectView(uri, returnObject)))
+                    for returnNode in vm.compileNode(returnObject):eachObject() do
+                        if returnNode.type == 'generic' and returnNode.sign and call.args then
+                            local resolvedGeneric = returnNode.sign:resolve(uri, call.args)
+                            debugCollectTrace(uri, 'sign.resolve.call-fallback.generic', ('resolved=%s'):format(debugCollectView(uri, resolvedGeneric and next(resolvedGeneric) and select(2, next(resolvedGeneric)) or nil)))
+                            if resolvedGeneric then
+                                local protoNode = vm.compileNode(returnNode.proto)
+                                for proto in protoNode:eachObject() do
+                                    resultNode:merge(vm.cloneObject(proto, resolvedGeneric) or proto)
+                                    hasResolved = true
+                                end
+                            else
+                                resultNode:merge(returnNode)
+                                hasResolved = true
+                            end
+                        else
+                            resultNode:merge(returnNode)
+                            hasResolved = true
+                        end
+                    end
+                end
+            end
+        end
+        if hasResolved then
+            return resultNode
+        end
+        return nil
+    end
+
     ---@param object vm.node|vm.node.object
     ---@param node   vm.node
     local function resolve(object, node)
@@ -61,6 +170,7 @@ function mt:resolve(uri, args)
         if object.type == 'doc.generic.name' then
             ---@type string
             local key = object[1]
+            debugCollectTrace(uri, 'sign.resolve.generic', ('key=%s node=%s literal=%s'):format(key, debugCollectView(uri, node), tostring(not not object.literal)))
             if object.literal then
                 -- 'number' -> `T`
                 for n in node:eachObject() do
@@ -188,7 +298,9 @@ function mt:resolve(uri, args)
             return
         end
         if object.type == 'doc.type.function' then
-            for i, arg in ipairs(object.args) do
+            local currentObject = vm.cloneObject(object, resolved) or object
+            debugCollectTrace(uri, 'sign.resolve.callback', ('args=%d returns=%d node=%s'):format(#currentObject.args, #currentObject.returns, debugCollectView(uri, node)))
+            for i, arg in ipairs(currentObject.args) do
                 if arg.extends then
                     for n in node:eachObject() do
                         if n.type == 'function'
@@ -202,15 +314,135 @@ function mt:resolve(uri, args)
                     end
                 end
             end
-            for i, ret in ipairs(object.returns) do
+            for i, ret in ipairs(currentObject.returns) do
+                local returnNodes = {}
+                local hasConcreteReturn = false
                 for n in node:eachObject() do
                     if n.type == 'function'
                     or n.type == 'doc.type.function' then
                         ---@cast n parser.object
-                        local fret = vm.getReturnOfFunction(n, i)
-                        if fret then
-                            resolve(ret, vm.compileNode(fret))
+                        if n.type == 'function' and n.args and currentObject.args then
+                            for argIndex, expectedArg in ipairs(currentObject.args) do
+                                local actualArg = n.args[argIndex]
+                                if actualArg and expectedArg.extends then
+                                    vm.setNode(actualArg, vm.compileNode(expectedArg.extends), true)
+                                    if actualArg.ref then
+                                        for _, ref in ipairs(actualArg.ref) do
+                                            vm.removeNode(ref)
+                                        end
+                                    end
+                                end
+                            end
+                            local cachedReturns = rawget(n, '_returns')
+                            if cachedReturns then
+                                for _, cachedReturn in ipairs(cachedReturns) do
+                                    vm.removeNode(cachedReturn)
+                                end
+                                rawset(n, '_returns', nil)
+                            end
+                            if n.returns then
+                                for _, returnList in ipairs(n.returns) do
+                                    for _, returnNode in ipairs(returnList) do
+                                        vm.removeNode(returnNode)
+                                        if returnNode.type == 'call' and returnNode.node then
+                                            local cachedCallReturns = rawget(returnNode.node, '_callReturns')
+                                            if cachedCallReturns then
+                                                for _, cachedCallReturn in ipairs(cachedCallReturns) do
+                                                    vm.removeNode(cachedCallReturn)
+                                                end
+                                                rawset(returnNode.node, '_callReturns', nil)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            vm.removeNode(n)
                         end
+                        local fret = vm.getReturnOfFunction(n, i)
+                        local fretNode
+                        if fret then
+                            fretNode = vm.compileNode(fret)
+                        end
+                        debugCollectTrace(uri, 'sign.resolve.callback.return', ('index=%d source=%s fret=%s'):format(i, n.type, debugCollectView(uri, fretNode)))
+                        if n.type == 'function'
+                        and fretNode
+                        and vm.getInfer(fretNode):view(uri) == 'unknown'
+                        and n.returns then
+                            local directReturnNodes = {}
+                            local hasConcreteDirectReturn = false
+                            for _, returnList in ipairs(n.returns) do
+                                local selectedNode, selectedExp = vm.selectNode(returnList, i)
+                                if selectedExp then
+                                    vm.removeNode(selectedExp)
+                                    if selectedExp.node then
+                                        vm.removeNode(selectedExp.node)
+                                        if selectedExp.node.node then
+                                            vm.removeNode(selectedExp.node.node)
+                                        end
+                                    end
+                                    if selectedExp.args then
+                                        for _, arg in ipairs(selectedExp.args) do
+                                            vm.removeNode(arg)
+                                        end
+                                    end
+                                    if selectedExp.type == 'call' and selectedExp.node then
+                                        local cachedCallReturns = rawget(selectedExp.node, '_callReturns')
+                                        if cachedCallReturns then
+                                            for _, cachedCallReturn in ipairs(cachedCallReturns) do
+                                                vm.removeNode(cachedCallReturn)
+                                            end
+                                            rawset(selectedExp.node, '_callReturns', nil)
+                                        end
+                                    end
+                                    selectedNode = vm.compileNode(selectedExp)
+                                    if vm.getInfer(selectedNode):view(uri) == 'unknown' and selectedExp.type == 'call' then
+                                        selectedNode = resolveCallExpression(selectedExp, i) or selectedNode
+                                    end
+                                end
+                                debugCollectTrace(uri, 'sign.resolve.callback.direct-selected', ('index=%d exp=%s node=%s'):format(
+                                    i,
+                                    selectedExp and selectedExp.type or 'nil',
+                                    debugCollectView(uri, selectedNode)
+                                ))
+                                if selectedExp and selectedExp.type == 'call' and selectedExp.node then
+                                    debugCollectTrace(uri, 'sign.resolve.callback.direct-selected.callee', ('index=%d callee=%s'):format(
+                                        i,
+                                        debugCollectView(uri, vm.compileNode(selectedExp.node))
+                                    ))
+                                end
+                                if selectedNode and vm.getInfer(selectedNode):view(uri) ~= 'unknown' then
+                                    directReturnNodes[#directReturnNodes+1] = selectedNode
+                                    hasConcreteDirectReturn = true
+                                end
+                            end
+                            if hasConcreteDirectReturn then
+                                for _, directReturnNode in ipairs(directReturnNodes) do
+                                    returnNodes[#returnNodes+1] = directReturnNode
+                                end
+                                debugCollectTrace(uri, 'sign.resolve.callback.direct-return', ('index=%d direct=%s'):format(i, table.concat((function ()
+                                    local views = {}
+                                    for idx = 1, #directReturnNodes do
+                                        views[idx] = debugCollectView(uri, directReturnNodes[idx])
+                                    end
+                                    return views
+                                end)(), ', ')))
+                                hasConcreteReturn = true
+                                goto CONTINUE
+                            end
+                        end
+                        if fretNode then
+                            returnNodes[#returnNodes+1] = fretNode
+                            if vm.getInfer(fretNode):view(uri) ~= 'unknown' then
+                                hasConcreteReturn = true
+                            end
+                        end
+                    end
+                    ::CONTINUE::
+                end
+                for _, fretNode in ipairs(returnNodes) do
+                    if not (hasConcreteReturn and vm.getInfer(fretNode):view(uri) == 'unknown') then
+                        debugCollectTrace(uri, 'sign.resolve.callback.apply-return', ('index=%d return=%s'):format(i, debugCollectView(uri, fretNode)))
+                        resolve(ret, fretNode)
                     end
                 end
             end

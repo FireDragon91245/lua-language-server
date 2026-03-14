@@ -309,6 +309,84 @@ local value = list3:collect(function(<?enum?>)
 end)
 ]]
 
+TEST 'list<string>' [[
+---@class enumerable<T>
+---@class list<T>
+
+local linq = {}
+
+---@generic T
+---@overload fun(): list<any>
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(table: table): list<any>
+function linq.list(...)
+end
+
+---@type list<string>
+local list3 = linq.list("ABC", "abc", "aBc", "TEST", "test", "Hallo")
+
+local <?list4?> = linq.list(list3)
+]]
+
+TEST 'list<string>' [[
+---@class enumerable<T>
+---@class list<T>
+
+local linq = {}
+
+---@generic T
+---@overload fun(): list<any>
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(table: table): list<any>
+function linq.list(...)
+end
+
+---@generic T, U
+---@overload fun(self: enumerable<T>, consumer: fun(enum: enumerable<T>): (U)): U
+function list:collect(...)
+end
+
+---@type list<string>
+local list3 = linq.list("ABC", "abc", "aBc", "TEST", "test", "Hallo")
+
+local <?list5?> = list3:collect(function(enum)
+    return linq.list(enum)
+end)
+]]
+
+TEST 'list<string>' [[
+---@class enumerable<T>
+---@class list<T>
+
+local linq = {}
+
+---@generic T
+---@overload fun(): list<any>
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(table: table): list<any>
+function linq.list(...)
+end
+
+---@generic T, U
+---@overload fun(self: enumerable<T>, consumer: fun(enum: enumerable<T>): (U)): U
+function list:collect(...)
+end
+
+---@type list<string>
+local list3 = linq.list("ABC", "abc", "aBc", "TEST", "test", "Hallo")
+
+list3:collect(function(enum)
+    local <?tmp?> = linq.list(enum)
+    return tmp
+end)
+]]
+
 TEST 'list<integer>' [[
 ---@class list<T>
 ---@class enumerable<T>

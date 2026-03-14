@@ -18,7 +18,7 @@ local plugin     = require 'plugin'
 ---@field package _callReturns? parser.object[]
 ---@field package _asCache?     parser.object[]
 
--- 该函数有副作用，会给source绑定node！
+-- 编译注释里的类型（如果有）并绑定到source上
 ---@param source parser.object
 ---@return boolean
 function vm.bindDocs(source)
@@ -1117,6 +1117,11 @@ local function getFuncArg(func, index)
     return nil
 end
 
+local debugCollectView
+local debugCollectArgsView
+local debugCollectTrace
+local debugCollectNodeMembers
+
 ---@param arg      parser.object
 ---@param call     parser.object
 ---@param callNode vm.node
@@ -1176,17 +1181,8 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
             return nil
         end
         local receiver = call.node.node
-        if receiver and receiver.type == 'getlocal' then
-            receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
-        end
-        if not receiver or not receiver.bindDocs then
-            return nil
-        end
-        for i = #receiver.bindDocs, 1, -1 do
-            local doc = receiver.bindDocs[i]
-            if doc.type == 'doc.type' or doc.type == 'doc.class' then
-                return doc
-            end
+        if receiver then
+            return receiver
         end
         return nil
     end
@@ -1266,6 +1262,13 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                         end
                     end
                 end
+                debugCollectTrace(guide.getUri(call), 'compileCallArgNode.dealDocFunc', ('method=%s argIndex=%d farg=%s resolvedArg=%s self=%s'):format(
+                    call.node and guide.getKeyName(call.node) or 'nil',
+                    myIndex,
+                    debugCollectView(guide.getUri(call), farg),
+                    debugCollectView(guide.getUri(call), resolvedArg),
+                    debugCollectView(guide.getUri(call), resolvedSelfArg)
+                ))
                 for fn in vm.compileNode(resolvedArg):eachObject() do
                     if isValidCallArgNode(arg, fn) then
                         local outputFn = fn
@@ -1298,6 +1301,11 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                                 outputFn = specialized
                             end
                         end
+                        debugCollectTrace(guide.getUri(call), 'compileCallArgNode.setNode', ('method=%s argIndex=%d output=%s'):format(
+                            call.node and guide.getKeyName(call.node) or 'nil',
+                            myIndex,
+                            debugCollectView(guide.getUri(call), outputFn)
+                        ))
                         vm.setNode(arg, outputFn)
                     end
                 end
@@ -1379,10 +1387,55 @@ function vm.compileCallArg(arg, call, index)
                     methodNode:merge(vm.compileNode(src))
                 end)
             end
+            local function mergeClassMethodCandidates(source)
+                local sourceNode = vm.compileNode(source)
+                for item in sourceNode:eachObject() do
+                    local classGlobal
+                    local typeName
+                    if item.type == 'global' and item.cate == 'type' then
+                        ---@cast item vm.global
+                        classGlobal = item
+                        typeName = item.name
+                    elseif item.type == 'doc.type.sign' and item.node and item.node[1] then
+                        typeName = item.node[1]
+                        classGlobal = vm.getGlobal('type', typeName)
+                    end
+                    if classGlobal then
+                        vm.getClassFields(guide.getUri(call), classGlobal, key, function (field)
+                            methodNode:merge(vm.compileNode(field))
+                        end)
+                    end
+                    if typeName then
+                        local globalField = vm.getGlobal('variable', typeName, key)
+                        if globalField then
+                            for _, set in ipairs(globalField:getSets(guide.getUri(call))) do
+                                methodNode:merge(vm.compileNode(set))
+                            end
+                        end
+                    end
+                end
+            end
             mergeMethodCandidates(receiver)
+            if receiver then
+                mergeClassMethodCandidates(receiver)
+            end
             if receiver and receiver.type == 'local' and receiver.value then
                 mergeMethodCandidates(receiver.value)
+                mergeClassMethodCandidates(receiver.value)
             end
+            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup', ('method=%s receiver=%s methodNode=%s'):format(
+                key,
+                debugCollectView(guide.getUri(call), receiver),
+                debugCollectView(guide.getUri(call), methodNode)
+            ))
+            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup.receiver-members', ('method=%s receiverMembers=[%s]'):format(
+                key,
+                debugCollectNodeMembers(guide.getUri(call), receiver and vm.compileNode(receiver) or nil)
+            ))
+            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup.members', ('method=%s members=[%s]'):format(
+                key,
+                debugCollectNodeMembers(guide.getUri(call), methodNode)
+            ))
             if not methodNode:isEmpty() then
                 callNode = methodNode
             end
@@ -1391,7 +1444,28 @@ function vm.compileCallArg(arg, call, index)
     if not callNode then
         callNode = vm.compileNode(call.node)
     end
+    debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.enter', ('method=%s index=%d arg=%s callNode=%s'):format(
+        call.node and guide.getKeyName(call.node) or 'nil',
+        index,
+        arg.type,
+        debugCollectView(guide.getUri(call), callNode)
+    ))
+    debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.enter.members', ('method=%s index=%d members=[%s]'):format(
+        call.node and guide.getKeyName(call.node) or 'nil',
+        index,
+        debugCollectNodeMembers(guide.getUri(call), callNode)
+    ))
     compileCallArgNode(arg, call, callNode, 0, index)
+    debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.result', ('method=%s index=%d node=%s'):format(
+        call.node and guide.getKeyName(call.node) or 'nil',
+        index,
+        debugCollectView(guide.getUri(call), vm.getNode(arg))
+    ))
+    debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.result.members', ('method=%s index=%d members=[%s]'):format(
+        call.node and guide.getKeyName(call.node) or 'nil',
+        index,
+        debugCollectNodeMembers(guide.getUri(call), vm.getNode(arg))
+    ))
 
     if call.node.special == 'pcall'
     or call.node.special == 'xpcall' then
@@ -1466,6 +1540,78 @@ local function buildCallArgsWithImplicitSelf(func, args)
     return newArgs
 end
 
+---@param uri uri?
+---@param source parser.object|vm.node|vm.node.object|any
+---@return string
+debugCollectView = function (uri, source)
+    if not source then
+        return 'nil'
+    end
+    if type(source) ~= 'table' then
+        return tostring(source)
+    end
+    if source.type == 'vm.node' then
+        local ok, view = pcall(vm.getInfer(source).view, vm.getInfer(source), uri)
+        if ok and view then
+            return view
+        end
+        return 'vm.node'
+    end
+    local ok, view = pcall(vm.getInfer(source).view, vm.getInfer(source), uri)
+    if ok and view then
+        return view
+    end
+    return source.type or tostring(source)
+end
+
+---@param uri uri?
+---@param args parser.object[]?
+---@return string
+debugCollectArgsView = function (uri, args)
+    if not args then
+        return ''
+    end
+    local views = {}
+    for i = 1, #args do
+        views[i] = debugCollectView(uri, args[i])
+    end
+    return table.concat(views, ', ')
+end
+
+---@param debugUri uri?
+---@param node vm.node?
+---@return string
+debugCollectNodeMembers = function (debugUri, node)
+    if not node then
+        return ''
+    end
+    local members = {}
+    for obj in node:eachObject() do
+        members[#members+1] = ('%s:%s'):format(obj.type, debugCollectView(debugUri, obj))
+    end
+    table.sort(members)
+    return table.concat(members, ', ')
+end
+
+---@param uri uri?
+---@param tag string
+---@param message string
+debugCollectTrace = function (uri, tag, message)
+    local state = rawget(_G, 'DEBUG_COLLECT_GENERIC')
+    if not state then
+        return
+    end
+    if state.onlyUri and uri ~= state.onlyUri then
+        return
+    end
+    local traces = state.traces
+    if not traces then
+        traces = {}
+        state.traces = traces
+    end
+    traces[#traces+1] = ('[%s] %s'):format(tag, message)
+end
+
 ---@param uri uri
 ---@param classGlobal vm.global
 ---@param callback fun(set: parser.object)
@@ -1515,6 +1661,16 @@ end
 ---@param func parser.object
 ---@param source parser.object
 local function compileFunctionParam(func, source)
+    local function invalidateFunctionCaches()
+        vm.removeNode(func)
+        if func._returns then
+            for _, ret in ipairs(func._returns) do
+                vm.removeNode(ret)
+            end
+            func._returns = nil
+        end
+    end
+
     local aindex
     for index, arg in ipairs(func.args) do
         if arg == source then
@@ -1525,19 +1681,40 @@ local function compileFunctionParam(func, source)
     ---@cast aindex integer
 
     local funcNode = vm.compileNode(func)
+    debugCollectTrace(guide.getUri(func), 'compileFunctionParam.enter', ('param=%s index=%d func=%s funcNode=%s parent=%s'):format(
+        source[1] or '?',
+        aindex,
+        func.type,
+        debugCollectView(guide.getUri(func), funcNode),
+        func.parent.type
+    ))
     if func.parent.type == 'callargs' then
         -- local call ---@type fun(f: fun(x: number));call(function (x) end) --> x -> number
+        local foundCandidate = false
         for n in funcNode:eachObject() do
             if n.type == 'doc.type.function' and n.args[aindex] then
+                foundCandidate = true
+                debugCollectTrace(guide.getUri(func), 'compileFunctionParam.callargs.candidate', ('param=%s candidate=%s candidateArg=%s'):format(
+                    source[1] or '?',
+                    debugCollectView(guide.getUri(func), n),
+                    debugCollectView(guide.getUri(func), n.args[aindex])
+                ))
                 local argNode = vm.compileNode(n.args[aindex])
                 for an in argNode:eachObject() do
                     if an.type ~= 'doc.generic.name' then
                         vm.setNode(source, an)
                     end
                 end
+                invalidateFunctionCaches()
                 -- NOTE: keep existing behavior for function as argument which only set type based on the 1st match
                 return true
             end
+        end
+        if not foundCandidate then
+            debugCollectTrace(guide.getUri(func), 'compileFunctionParam.callargs.miss', ('param=%s funcNode=%s'):format(
+                source[1] or '?',
+                debugCollectView(guide.getUri(func), funcNode)
+            ))
         end
     else
         -- function declaration: use info from all `fun()`, also from the base function when overriding
@@ -1572,6 +1749,7 @@ local function compileFunctionParam(func, source)
             end
         end
         if found then
+            invalidateFunctionCaches()
             return true
         end
     end
@@ -1627,9 +1805,19 @@ local function compileFunctionParam(func, source)
             if not node then
                 goto continue
             end
+            debugCollectTrace(guide.getUri(func), 'compileFunctionParam.local-callback.node', ('param=%s callbackIndex=%d node=%s'):format(
+                source[1] or '?',
+                cbIndex,
+                debugCollectView(guide.getUri(func), node)
+            ))
             for n in node:eachObject() do
                 -- check if the inferred function has arg at `aindex`
                 if n.type == 'doc.type.function' and n.args and n.args[aindex] then
+                    debugCollectTrace(guide.getUri(func), 'compileFunctionParam.local-callback.candidate', ('param=%s candidate=%s candidateArg=%s'):format(
+                        source[1] or '?',
+                        debugCollectView(guide.getUri(func), n),
+                        debugCollectView(guide.getUri(func), n.args[aindex])
+                    ))
                     -- use type info on this `aindex` arg
                     local argNode = vm.compileNode(n.args[aindex])
                     for an in argNode:eachObject() do
@@ -1643,6 +1831,7 @@ local function compileFunctionParam(func, source)
             ::continue::
         end
         if found then
+            invalidateFunctionCaches()
             return true
         end
     end
@@ -1682,6 +1871,7 @@ local function compileFunctionParam(func, source)
                 end
             end
             if found then
+                invalidateFunctionCaches()
                 return true
             end
         end
@@ -1804,9 +1994,11 @@ end
 ---@param index  integer
 ---@param args   parser.object[]
 local function bindReturnOfFunction(source, mfunc, index, args)
+    local uri = guide.getUri(source)
     local returnObject = vm.getReturnOfFunction(mfunc, index)
     if not returnObject then
         vm.setNode(source, vm.declareGlobal('type', 'nil'))
+        debugCollectTrace(uri, 'bindReturnOfFunction', ('func=%s return=nil args=[%s]'):format(source.func and guide.getKeyName(source.func) or mfunc.type, debugCollectArgsView(uri, args)))
         return
     end
 
@@ -1814,14 +2006,26 @@ local function bindReturnOfFunction(source, mfunc, index, args)
     if source.func and source.func.type == 'getmethod' then
         local receiver = source.func.node
         if receiver then
-            resolveArgs = { receiver }
-            if args then
-                for i = 2, #args do
-                    resolveArgs[#resolveArgs + 1] = args[i]
+            local sign = vm.getSign(mfunc)
+            if sign and args and #args == #sign.signList then
+                resolveArgs = args
+            else
+                resolveArgs = { receiver }
+                if args then
+                    for i = 1, #args do
+                        resolveArgs[#resolveArgs + 1] = args[i]
+                    end
                 end
             end
         end
     end
+
+    debugCollectTrace(uri, 'bindReturnOfFunction', ('func=%s return=%s args=[%s] resolve=[%s]'):format(
+        source.func and guide.getKeyName(source.func) or mfunc.type,
+        debugCollectView(uri, returnObject),
+        debugCollectArgsView(uri, args),
+        debugCollectArgsView(uri, resolveArgs)
+    ))
 
     local returnNode = vm.compileNode(returnObject)
 
@@ -1867,6 +2071,16 @@ local function bindReturnOfFunction(source, mfunc, index, args)
         if rnode.type == 'generic' then
             if selfGenericResolved and rnode.sign then
                 local resolved = rnode.sign:resolve(guide.getUri(source), resolveArgs) or {}
+                local resolvedParts = {}
+                for key, value in pairs(resolved) do
+                    resolvedParts[#resolvedParts+1] = ('%s=%s'):format(key, debugCollectView(uri, value))
+                end
+                table.sort(resolvedParts)
+                debugCollectTrace(uri, 'bindReturnOfFunction.generic', ('func=%s proto=%s resolved={%s}'):format(
+                    source.func and guide.getKeyName(source.func) or mfunc.type,
+                    debugCollectView(uri, rnode.proto),
+                    table.concat(resolvedParts, ', ')
+                ))
                 for k, v in pairs(selfGenericResolved) do
                     resolved[k] = v
                 end
@@ -2337,6 +2551,33 @@ local compilerSwitch = util.switch()
                     vm.setNode(source, vm.compileNode(source.value))
                 end
             end)
+            local uri = guide.getUri(source)
+            local receiverNode = vm.compileNode(source.node)
+            for item in receiverNode:eachObject() do
+                local classGlobal
+                local typeName
+                if item.type == 'global' and item.cate == 'type' then
+                    ---@cast item vm.global
+                    classGlobal = item
+                    typeName = item.name
+                elseif item.type == 'doc.type.sign' and item.node and item.node[1] then
+                    typeName = item.node[1]
+                    classGlobal = vm.getGlobal('type', typeName)
+                end
+                if classGlobal then
+                    vm.getClassFields(uri, classGlobal, key, function (field)
+                        vm.setNode(source, vm.compileNode(field))
+                    end)
+                end
+                if typeName then
+                    local globalField = vm.getGlobal('variable', typeName, key)
+                    if globalField then
+                        for _, set in ipairs(globalField:getSets(uri)) do
+                            vm.setNode(source, vm.compileNode(set))
+                        end
+                    end
+                end
+            end
         end
     end)
     : case 'setglobal'
@@ -2490,16 +2731,11 @@ local compilerSwitch = util.switch()
             if hasReturn then
                 local hasKnownType
                 local hasUnknownType
+                local uri = guide.getUri(source)
                 for n in vm.getNode(source):eachObject() do
-                    if guide.isLiteral(n) then
-                        if n.type ~= 'nil' then
-                            hasKnownType = true
-                            break
-                        end
-                        goto CONTINUE
-                    end
-                    if n.type == 'global' and n.cate == 'type' then
-                        if n.name ~= 'nil' then
+                    local view = vm.getInfer(n):view(uri)
+                    if view and view ~= 'unknown' then
+                        if view ~= 'nil' then
                             hasKnownType = true
                             break
                         end
