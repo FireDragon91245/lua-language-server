@@ -187,6 +187,24 @@ end
 local <?result?> = linq.list()
 ]]
 
+TEST 'list<integer>' [[
+---@class list<T>
+---@class enumerable<T>
+
+local linq = {}
+
+---@generic T
+---@overload fun(): list<any>
+---@overload fun(...: T): list<T>
+---@overload fun(list: list<T>): list<T>
+---@overload fun(enumerable: enumerable<T>): list<T>
+---@overload fun(table: table): list<any>
+function linq.list(...)
+end
+
+local <?abcd?> = linq.list(1)
+]]
+
 TEST 'enumerable<string>' [[
 ---@class enumerable<T>
 

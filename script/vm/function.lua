@@ -388,7 +388,7 @@ end
 ---@param args parser.object[]
 ---@param func parser.object
 ---@param index integer
----@return parser.object?
+---@return parser.object|vm.generic?
 local function getResolvedParamObject(uri, args, func, index)
     local param = func.args and func.args[index]
     if not param then
@@ -520,7 +520,21 @@ local function calcFunctionMatchScore(uri, args, func)
     for i = 1, math.min(#args, #func.args) do
         local arg = args[i]
         local originalParam = func.args[i]
-        local param = getResolvedParamObject(uri, args, func, i) or originalParam
+        local resolvedParam = getResolvedParamObject(uri, args, func, i) or originalParam
+        ---@type parser.object
+        local param = originalParam
+        if resolvedParam and resolvedParam.type ~= 'generic' then
+            ---@cast resolvedParam parser.object
+            param = resolvedParam
+        end
+        if resolvedParam and resolvedParam.type == 'generic' then
+            ---@cast resolvedParam vm.generic
+            local genericProto = resolvedParam.proto
+            if genericProto and genericProto.type ~= 'generic' then
+                ---@cast genericProto parser.object
+                param = genericProto
+            end
+        end
         matchScore = matchScore + getParamSpecificityScore(uri, arg, param)
         local defLiterals, literalsCount = vm.getLiterals(param)
         if defLiterals then
@@ -538,8 +552,12 @@ local function calcFunctionMatchScore(uri, args, func)
         local paramView = vm.getInfer(param):view(uri)
         if hasStructuredGenericParam(originalParam)
         and arg.type ~= 'function'
-        and argView and paramView and argView == paramView then
-            matchScore = matchScore + 2
+        and argView and paramView then
+            if argView == paramView then
+                matchScore = matchScore + 2
+            else
+                matchScore = matchScore - 2
+            end
         end
     end
     return matchScore
@@ -585,7 +603,7 @@ local function filterExactArityOverloads(args, funcs)
             exact[#exact + 1] = func
         end
     end
-    if #exact > 0 then
+    if #exact == 1 then
         for _, func in ipairs(exact) do
             if hasExplicitReturns(func) then
                 return exact
