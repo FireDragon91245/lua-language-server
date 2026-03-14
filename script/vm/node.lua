@@ -432,11 +432,16 @@ end
 ---@return vm.node
 function vm.setNode(source, node, cover)
     if not node then
+        local cached = vm.nodeCache[source]
+        if cached then
+            return cached
+        end
         if TEST then
             error('Can not set nil node')
         else
             log.error('Can not set nil node')
         end
+        node = vm.createNode()
     end
     if cover then
         ---@cast node vm.node

@@ -1898,7 +1898,10 @@ local function compileLocal(source)
         local selfNode = guide.getSelfNode(source)
         if selfNode then
             hasMarkParam = true
-            vm.setNode(source, vm.compileNode(selfNode))
+            local resolvedSelfNode = vm.compileNode(selfNode)
+            if resolvedSelfNode then
+                vm.setNode(source, resolvedSelfNode)
+            end
             myNode:remove 'function'
         end
     end
@@ -1909,7 +1912,10 @@ local function compileLocal(source)
         if source.value.type == 'table' then
             vm.setNode(source, source.value)
         elseif source.value.type ~= 'nil' then
-            vm.setNode(source, vm.compileNode(source.value))
+            local resolvedValueNode = vm.compileNode(source.value)
+            if resolvedValueNode then
+                vm.setNode(source, resolvedValueNode)
+            end
         end
     end
 
@@ -2838,6 +2844,61 @@ local compilerSwitch = util.switch()
             return
         end
         local funcNode = vm.compileNode(func)
+        if (func.type == 'getfield' or func.type == 'getmethod')
+        and vm.getInfer(funcNode):view(guide.getUri(source)) == 'unknown' then
+            local key = guide.getKeyName(func)
+            if key then
+                local receiver = func.node
+                if receiver and receiver.type == 'getlocal' then
+                    receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+                end
+                local rebuiltFuncNode = vm.createNode()
+                local function mergeMethodCandidates(target)
+                    vm.compileByParentNode(target, key, function (src)
+                        rebuiltFuncNode:merge(vm.compileNode(src))
+                    end)
+                end
+                local function mergeClassMethodCandidates(target)
+                    local targetNode = vm.compileNode(target)
+                    for item in targetNode:eachObject() do
+                        local classGlobal
+                        local typeName
+                        if item.type == 'global' and item.cate == 'type' then
+                            ---@cast item vm.global
+                            classGlobal = item
+                            typeName = item.name
+                        elseif item.type == 'doc.type.sign' and item.node and item.node[1] then
+                            typeName = item.node[1]
+                            classGlobal = vm.getGlobal('type', typeName)
+                        end
+                        if classGlobal then
+                            vm.getClassFields(guide.getUri(source), classGlobal, key, function (field)
+                                rebuiltFuncNode:merge(vm.compileNode(field))
+                            end)
+                        end
+                        if typeName then
+                            local globalField = vm.getGlobal('variable', typeName, key)
+                            if globalField then
+                                for _, set in ipairs(globalField:getSets(guide.getUri(source))) do
+                                    rebuiltFuncNode:merge(vm.compileNode(set))
+                                end
+                            end
+                        end
+                    end
+                end
+                if receiver then
+                    mergeMethodCandidates(receiver)
+                    mergeClassMethodCandidates(receiver)
+                    if receiver.type == 'local' and receiver.value then
+                        mergeMethodCandidates(receiver.value)
+                        mergeClassMethodCandidates(receiver.value)
+                    end
+                end
+                if not rebuiltFuncNode:isEmpty() then
+                    funcNode = rebuiltFuncNode
+                end
+            end
+        end
         local matchedFuncs = vm.getExactMatchedFunctions(func, args)
         ---@type vm.node?
         for nd in funcNode:eachObject() do
@@ -3227,7 +3288,8 @@ end
 
 ---@param source vm.object
 local function compileByParentNode(source)
-    if vm.getNode(source):isTyped() then
+    local node = vm.getNode(source)
+    if not node or node:isTyped() then
         return
     end
     vm.compileByNodeChain(source, function (result)
