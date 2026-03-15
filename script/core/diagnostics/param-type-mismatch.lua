@@ -125,6 +125,20 @@ local function getRawDefNode(funcNode, i)
     return defNode
 end
 
+---@param call parser.object
+---@return vm.node
+local function getMatchedFuncNode(call)
+    local funcs = vm.getExactMatchedFunctions(call.node, call.args)
+    if not funcs or #funcs == 0 then
+        return vm.compileNode(call.node)
+    end
+    local node = vm.createNode()
+    for _, func in ipairs(funcs) do
+        node:merge(func)
+    end
+    return node
+end
+
 ---@async
 return function (uri, callback)
     local state = files.getState(uri)
@@ -138,7 +152,7 @@ return function (uri, callback)
             return
         end
         await.delay()
-        local funcNode = vm.compileNode(source.node)
+        local funcNode = getMatchedFuncNode(source)
         -- Get the class generic map for method calls on generic class instances
         local classGenericMap = getReceiverGenericMap(uri, source)
         for i, arg in ipairs(source.args) do

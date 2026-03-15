@@ -129,6 +129,33 @@ local function isEventNotMatch(call, src)
     return eventLiteral ~= literal
 end
 
+---@param call parser.object
+---@return vm.node
+local function getMatchedSignatureNode(call)
+    local explicitArgCount = 0
+    if call.args then
+        for _, arg in ipairs(call.args) do
+            if arg.type ~= 'self' then
+                explicitArgCount = explicitArgCount + 1
+            end
+        end
+    end
+    if explicitArgCount <= 1 then
+        local node = vm.compileNode(call.node)
+        return node.originNode or node
+    end
+    local funcs = vm.getExactMatchedFunctions(call.node, call.args)
+    if not funcs or #funcs == 0 then
+        local node = vm.compileNode(call.node)
+        return node.originNode or node
+    end
+    local node = vm.createNode()
+    for _, func in ipairs(funcs) do
+        node:merge(func)
+    end
+    return node
+end
+
 ---@async
 local function makeSignatures(text, call, pos)
     local func = call.node
@@ -172,9 +199,7 @@ local function makeSignatures(text, call, pos)
         end
     end
     local signs = {}
-    local node = vm.compileNode(func)
-    ---@type vm.node
-    node = node.originNode or node
+    local node = getMatchedSignatureNode(call)
     local mark = {}
     for src in node:eachObject() do
         if (src.type == 'function' and not vm.isVarargFunctionWithOverloads(src))

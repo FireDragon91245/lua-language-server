@@ -470,6 +470,42 @@ end
 
 ---@param uri uri
 ---@param arg parser.object?
+---@return boolean
+local function isScalarArg(uri, arg)
+    if not arg then
+        return false
+    end
+    if arg.type == 'function' then
+        return false
+    end
+    local infer = vm.getInfer(arg)
+    if infer:hasClass(uri) then
+        return false
+    end
+    if infer:hasType(uri, 'table') then
+        return false
+    end
+    return true
+end
+
+---@param args parser.object[]
+---@param func parser.object
+---@return integer
+local function getFunctionArityPriority(args, func)
+    local amin, amax = vm.countList(args)
+    local min, max, def = vm.countParamsOfFunction(func)
+    if amin == amax and min == amax and max == amax and def == amax then
+        return 3
+    end
+    local lastParam = func.args and func.args[#func.args] or nil
+    if isVariadicParam(lastParam) then
+        return 1
+    end
+    return 2
+end
+
+---@param uri uri
+---@param arg parser.object?
 ---@param param parser.object?
 ---@return integer
 local function getParamSpecificityScore(uri, arg, param)
@@ -477,16 +513,45 @@ local function getParamSpecificityScore(uri, arg, param)
         return 0
     end
     local score = 0
-    if not vm.getInfer(param):hasAny(uri) then
+    if isVariadicParam(param) then
+        return -1
+    end
+    local paramInfer = vm.getInfer(param)
+    if isPlainTableArg(uri, arg) and hasExplicitTableParam(uri, param) then
+        score = score + 8
+    end
+
+    local argView = arg and vm.getInfer(arg):view(uri) or nil
+    local paramView = paramInfer:view(uri)
+    if argView and paramView and argView == paramView and not paramInfer:hasAny(uri) then
+        score = score + 6
+    end
+
+    if not paramInfer:hasAny(uri) then
         score = score + 2
     end
-    if isPlainTableArg(uri, arg) and hasExplicitTableParam(uri, param) then
-        score = score + 3
-    end
-    if isVariadicParam(param) then
-        score = score - 1
-    end
+
     return score
+end
+
+---@param arg parser.object?
+---@param param parser.object?
+---@return boolean
+local function hasExactLiteralMatch(arg, param)
+    if not arg or not param then
+        return false
+    end
+    local argLiterals = vm.getLiterals(arg)
+    local paramLiterals = vm.getLiterals(param)
+    if not argLiterals or not paramLiterals then
+        return false
+    end
+    for literal in pairs(argLiterals) do
+        if paramLiterals[literal] then
+            return true
+        end
+    end
+    return false
 end
 
 ---@param func parser.object
@@ -516,7 +581,7 @@ local function calcFunctionMatchScore(uri, args, func)
     then
         return -1
     end
-    local matchScore = 0
+    local matchScore = getFunctionArityPriority(args, func) * 10
     for i = 1, math.min(#args, #func.args) do
         local arg = args[i]
         local originalParam = func.args[i]
@@ -536,17 +601,9 @@ local function calcFunctionMatchScore(uri, args, func)
             end
         end
         matchScore = matchScore + getParamSpecificityScore(uri, arg, param)
-        local defLiterals, literalsCount = vm.getLiterals(param)
-        if defLiterals then
-            for n in vm.compileNode(arg):eachObject() do
-                -- if param's literals map contains arg's literal, this is narrower than a subtype match
-                if defLiterals[guide.getLiteral(n)] then
-                    -- the more the literals defined in the param, the less bonus score will be added
-                    -- this favors matching overload param with exact literal value, over alias/enum that has many literal values
-                    matchScore = matchScore + 1/literalsCount
-                    break
-                end
-            end
+        local _, literalsCount = vm.getLiterals(param)
+        if hasExactLiteralMatch(arg, param) then
+            matchScore = matchScore + math.max(1, 12 / math.max(literalsCount, 1))
         end
         local argView = vm.getInfer(arg):view(uri)
         local paramView = vm.getInfer(param):view(uri)
@@ -554,9 +611,12 @@ local function calcFunctionMatchScore(uri, args, func)
         and arg.type ~= 'function'
         and argView and paramView then
             if argView == paramView then
-                matchScore = matchScore + 2
+                matchScore = matchScore + 4
             else
-                matchScore = matchScore - 2
+                if isScalarArg(uri, arg) then
+                    return -1
+                end
+                matchScore = matchScore - 20
             end
         end
     end
@@ -598,8 +658,8 @@ local function filterExactArityOverloads(args, funcs)
     end
     local exact = {}
     for _, func in ipairs(funcs) do
-        local min, max = vm.countParamsOfFunction(func)
-        if min == amin and max == amax then
+        local _, max, def = vm.countParamsOfFunction(func)
+        if max == amax and def == amax then
             exact[#exact + 1] = func
         end
     end
@@ -669,6 +729,7 @@ end
 function vm.getMatchedFunctions(func, args, mark)
     local funcs = {}
     local node = vm.compileNode(func)
+    node = node.originNode or node
     for n in node:eachObject() do
         if n.type == 'function'
         or n.type == 'doc.type.function' then

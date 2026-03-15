@@ -1373,6 +1373,41 @@ function vm.compileCallArg(arg, call, index)
         end
     end
 
+    local narrowedCallNode = vm.compileNode(call.node)
+
+    local function narrowCallArgNodeByCallNode(targetNode)
+        if not targetNode or not narrowedCallNode or narrowedCallNode:isEmpty() then
+            return targetNode
+        end
+        local narrowedFuncs = {}
+        for func in narrowedCallNode:eachObject() do
+            if func.type == 'function'
+            or func.type == 'doc.type.function' then
+                narrowedFuncs[func] = true
+            end
+        end
+        if not next(narrowedFuncs) then
+            return targetNode
+        end
+        local resultNode = vm.createNode()
+        local hasMatchedFunc = false
+        for obj in targetNode:eachObject() do
+            if obj.type == 'function'
+            or obj.type == 'doc.type.function' then
+                if narrowedFuncs[obj] then
+                    resultNode:merge(obj)
+                    hasMatchedFunc = true
+                end
+            else
+                resultNode:merge(obj)
+            end
+        end
+        if hasMatchedFunc then
+            return resultNode
+        end
+        return targetNode
+    end
+
     local callNode
     if call.node.type == 'getmethod' then
         local key = guide.getKeyName(call.node)
@@ -1437,12 +1472,12 @@ function vm.compileCallArg(arg, call, index)
                 debugCollectNodeMembers(guide.getUri(call), methodNode)
             ))
             if not methodNode:isEmpty() then
-                callNode = methodNode
+                callNode = narrowCallArgNodeByCallNode(methodNode)
             end
         end
     end
     if not callNode then
-        callNode = vm.compileNode(call.node)
+        callNode = narrowedCallNode
     end
     debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.enter', ('method=%s index=%d arg=%s callNode=%s'):format(
         call.node and guide.getKeyName(call.node) or 'nil',

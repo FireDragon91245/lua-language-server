@@ -258,6 +258,53 @@ X(1, { 2, 3 }<??>, 4)
 }
 
 TEST [[
+---@class equality_comparer
+---@class enumerable<T>
+---@class list<T>
+local list = {}
+
+---@generic T
+---@overload fun(self: list<T>, predicate: fun(item: T): (boolean)): enumerable<T>
+---@overload fun(self: list<T>, predicate: string): enumerable<T>
+---@overload fun(self: list<T>, predicate: table): enumerable<T>
+---@overload fun(self: list<T>, predicate: table, equality_comparer: equality_comparer): enumerable<T>
+---@overload fun(self: list<T>, selector: fun(item: T): (any)): enumerable<T>
+---@overload fun(self: list<T>, selector: fun(item: T): (any), value: any, equality_comparer: equality_comparer): enumerable<T>
+---@overload fun(self: list<T>, selector: fun(item: T): (any), value: any): enumerable<T>
+---@overload fun(self: list<T>, selector: string): enumerable<T>
+---@overload fun(self: list<T>, selector: string, value: any): enumerable<T>
+---@overload fun(self: list<T>, selector: string, value: any, equality_comparer: equality_comparer): enumerable<T>
+function list:where(...)
+end
+
+list:where("x => x.a", <?1?>)
+]]
+{
+'(method) list:where(selector: string, <!value: any!>)'
+}
+
+TEST [[
+---@class equality_comparer
+---@class enumerable<T>
+---@class list<T>
+local list = {}
+
+---@generic T
+---@overload fun(self: list<T>, selector: string, value: table, equality_comparer: equality_comparer): enumerable<T>
+---@overload fun(self: list<T>, selector: string, value: any, equality_comparer: equality_comparer): enumerable<T>
+function list:where(...)
+end
+
+---@type equality_comparer
+local comparer
+
+list:where("payload", { a = 1 }, <?comparer?>)
+]]
+{
+'(method) list:where(selector: string, value: table, <!equality_comparer: equality_comparer!>)'
+}
+
+TEST [[
 ---@param a [table<any>, {[1]:any,[2]:any}]
 function X(a) end
 
