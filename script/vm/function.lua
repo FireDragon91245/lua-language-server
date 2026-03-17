@@ -450,22 +450,146 @@ end
 ---@param param parser.object?
 ---@return boolean
 local function hasExplicitTableParam(uri, param)
+    if param and param.type == 'doc.type.arg' and param.extends then
+        param = param.extends
+    end
+    if param and param.type == 'doc.type' and param.types and #param.types == 1 then
+        param = param.types[1]
+    end
     if not param then
         return false
+    end
+    if param.type == 'doc.type.table'
+    or param.type == 'doc.type.array' then
+        return true
+    end
+    if param.type == 'doc.type.name' then
+        return param[1] == 'table'
+    end
+    if param.type == 'doc.type.sign' and param.node and param.node[1] then
+        return param.node[1] == 'table'
     end
     local infer = vm.getInfer(param)
     return infer:hasType(uri, 'table') and not infer:hasClass(uri)
 end
 
+---@param param parser.object|vm.generic?
+---@return parser.object?
+local function getTableParamProto(param)
+    if not param then
+        return nil
+    end
+    if param.type == 'generic' then
+        ---@cast param vm.generic
+        local proto = param.proto
+        if proto and proto.type ~= 'generic' then
+            ---@cast proto parser.object
+            return proto
+        end
+        return nil
+    end
+    ---@cast param parser.object
+    return param
+end
+
+---@param param parser.object?
+---@return boolean
+local function isSpecializedTableParam(param)
+    if param and param.type == 'doc.type.arg' and param.extends then
+        param = param.extends
+    end
+    if param and param.type == 'doc.type' and param.types and #param.types == 1 then
+        param = param.types[1]
+    end
+    if not param then
+        return false
+    end
+    if param.type == 'doc.type.table'
+    or param.type == 'doc.type.array' then
+        return true
+    end
+    if param.type == 'doc.type.name' then
+        return param[1] == 'table'
+           and param.signs ~= nil
+           and #param.signs > 0
+    end
+    local specialized = false
+    guide.eachSourceType(param, 'doc.type.table', function (_)
+        specialized = true
+    end)
+    if specialized then
+        return true
+    end
+    guide.eachSourceType(param, 'doc.type.array', function (_)
+        specialized = true
+    end)
+    if specialized then
+        return true
+    end
+    guide.eachSourceType(param, 'doc.type.sign', function (_)
+        specialized = true
+    end)
+    return specialized
+end
+
 ---@param uri uri
 ---@param arg parser.object?
 ---@return boolean
-local function isPlainTableArg(uri, arg)
+local function isExplicitTableArg(uri, arg)
     if not arg then
         return false
     end
+    local node = vm.compileNode(arg)
+    local hasTable = false
+    local hasOtherClass = false
+    for n in node:eachObject() do
+        if n.type == 'table'
+        or n.type == 'doc.type.table'
+        or n.type == 'doc.type.array' then
+            hasTable = true
+        elseif n.type == 'global' and n.cate == 'type' then
+            ---@cast n vm.global
+            if n.name == 'table' then
+                hasTable = true
+            elseif not guide.isBasicType(n.name) then
+                hasOtherClass = true
+            end
+        elseif n.type == 'doc.type.sign' and n.node and n.node[1] then
+            if n.node[1] == 'table' then
+                hasTable = true
+            else
+                hasOtherClass = true
+            end
+        end
+    end
+    if hasOtherClass then
+        return false
+    end
+    if hasTable then
+        return true
+    end
     local infer = vm.getInfer(arg)
     return infer:hasType(uri, 'table') and not infer:hasClass(uri)
+end
+
+---@param arg parser.object?
+---@return boolean
+local function isStructuredTableArg(arg)
+    if not arg then
+        return false
+    end
+    local node = vm.compileNode(arg)
+    for n in node:eachObject() do
+        if n.type == 'table'
+        or n.type == 'doc.type.table'
+        or n.type == 'doc.type.array' then
+            return true
+        end
+        if n.type == 'doc.type.sign' and n.node and n.node[1] == 'table' and n.signs and #n.signs > 0 then
+            return true
+        end
+    end
+    return false
 end
 
 ---@param uri uri
@@ -517,7 +641,7 @@ local function getParamSpecificityScore(uri, arg, param)
         return -1
     end
     local paramInfer = vm.getInfer(param)
-    if isPlainTableArg(uri, arg) and hasExplicitTableParam(uri, param) then
+    if isExplicitTableArg(uri, arg) and hasExplicitTableParam(uri, param) then
         score = score + 8
     end
 
@@ -630,7 +754,7 @@ end
 local function filterExplicitTableOverloads(uri, args, funcs)
     local filtered = funcs
     for i = 1, #args do
-        if not isPlainTableArg(uri, args[i]) then
+        if not isExplicitTableArg(uri, args[i]) then
             goto CONTINUE
         end
         local explicit = {}
@@ -642,6 +766,20 @@ local function filterExplicitTableOverloads(uri, args, funcs)
         end
         if #explicit > 0 then
             filtered = explicit
+        end
+
+        if isStructuredTableArg(args[i]) then
+            local specialized = {}
+            for _, func in ipairs(filtered) do
+                local param = getTableParamProto(getResolvedParamObject(uri, args, func, i) or (func.args and func.args[i]))
+                if hasExplicitTableParam(uri, param)
+                and isSpecializedTableParam(param) then
+                    specialized[#specialized + 1] = func
+                end
+            end
+            if #specialized > 0 then
+                filtered = specialized
+            end
         end
         ::CONTINUE::
     end

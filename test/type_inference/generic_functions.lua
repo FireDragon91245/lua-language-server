@@ -187,6 +187,62 @@ end
 local <?result?> = linq.list()
 ]]
 
+TEST 'dict<string, integer>' [[
+---@class dict<K, V>
+---@class enumerable<K, V>
+---@class iter<K, V>
+
+local linq = {}
+
+---@generic K, V
+---@overload fun(): dict<any, any>
+---@overload fun(table: { [K]: V }): dict<K, V>
+---@overload fun(dict: dict<K, V>): dict<K, V>
+---@overload fun(enumerable: enumerable<K, V>): dict<K, V>
+---@overload fun(iter: iter<K, V>): dict<K, V>
+---@overload fun(table: table): dict<any, any>
+function linq.dict(...)
+end
+
+local tab = {
+    ["a"] = 1,
+    ["b"] = 2,
+}
+
+local <?result?> = linq.dict(tab)
+]]
+
+TEST 'dict<any, any>' [[
+---@class dict<K, V>
+---@class enumerable<K, V>
+---@class iter<K, V>
+
+local linq = {}
+
+---@generic K, V
+---@overload fun(): dict<any, any>
+---@overload fun(table: { [K]: V }): dict<K, V>
+---@overload fun(dict: dict<K, V>): dict<K, V>
+---@overload fun(enumerable: enumerable<K, V>): dict<K, V>
+---@overload fun(iter: iter<K, V>): dict<K, V>
+---@overload fun(table: table): dict<any, any>
+function linq.dict(...)
+end
+
+---@return table
+local function make_table()
+    return {
+        ["a"] = 1,
+        ["b"] = 2,
+        [1] = 3,
+    }
+end
+
+local t = make_table()
+
+local <?result?> = linq.dict(t)
+]]
+
 TEST 'list<integer>' [[
 ---@class list<T>
 ---@class enumerable<T>
