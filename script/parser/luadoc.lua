@@ -1656,7 +1656,17 @@ local docSwitch = util.switch()
         local ret = parseType(result)
         if ret then
             result.extends = ret
+            result.returns = { ret }
             result.finish  = ret.finish
+            while checkToken('symbol', ',', 1) do
+                nextToken()
+                local nextRet = parseType(result)
+                if not nextRet then
+                    break
+                end
+                result.returns[#result.returns + 1] = nextRet
+                result.finish = nextRet.finish
+            end
         end
 
         return result

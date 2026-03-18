@@ -1130,6 +1130,7 @@ LuaDoc [[
                         },
                     },
                 },
+                returns         = "<IGNORE>",
                 bindComments    = {
                 },
                 class           = "<LOOP>",
@@ -1210,6 +1211,7 @@ LuaDoc [[
                 },
             },
         },
+        returns         = "<IGNORE>",
         bindComments    = {
         },
         class           = {

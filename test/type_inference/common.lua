@@ -31,7 +31,7 @@ var = y
 
 TEST 'any' [[
 function f(<?x?>)
-    
+
 end
 ]]
 
@@ -1452,7 +1452,7 @@ local mt = {}
 function mt:loop(callback) end
 
 mt:loop(function (<?i?>)
-    
+
 end)
 ]]
 
@@ -2351,6 +2351,74 @@ local iter = iter_impl
 for <?value?> in iter do
 end
 ]]
+
+TEST 'string' [[
+---@class itermeta<K, V>
+---@operator call:(iter<K, V>): K, V
+
+---@class iter<K, V>: itermeta<K, V>
+local iter_impl = {}
+
+---@type iter<string, integer>
+local iter = iter_impl
+
+for <?key?>, value in iter do
+end
+]]
+
+TEST 'integer' [[
+---@class itermeta<K, V>
+---@operator call:(iter<K, V>): K, V
+
+---@class iter<K, V>: itermeta<K, V>
+local iter_impl = {}
+
+---@type iter<string, integer>
+local iter = iter_impl
+
+for key, <?value?> in iter do
+end
+]]
+
+TEST 'string|number' [[
+---@class iter<T>
+---@operator call:(iter<T>): T
+---@class iter<K, V>
+---@operator call:(iter<K, V>): K, V
+local iter_impl = {}
+
+---@type iter<string|number>
+local iter_t = iter_impl
+
+---@type iter<string, integer>
+local iter_kv = iter_impl
+
+for <?value?> in iter_t do
+end
+
+for key, other in iter_kv do
+end
+]]
+
+TEST 'integer' [[
+---@class iter<T>
+---@operator call:(iter<T>): T
+---@class iter<K, V>
+---@operator call:(iter<K, V>): K, V
+local iter_impl = {}
+
+---@type iter<string|number>
+local iter_t = iter_impl
+
+---@type iter<string, integer>
+local iter_kv = iter_impl
+
+for value in iter_t do
+end
+
+for key, <?other?> in iter_kv do
+end
+]]
 TEST 'integer' [[
 local x
 
@@ -2627,7 +2695,7 @@ return function ()
     if not t then
         return
     end
-    
+
     print(<?t?>)
 end
 ]]
@@ -2640,7 +2708,7 @@ f(function ()
     if not t then
         return
     end
-    
+
     print(<?t?>)
 end)
 ]]
@@ -3374,7 +3442,7 @@ local n
 ---@type string
 local s
 
-local <?test?>  = t[n] 
+local <?test?>  = t[n]
 local test2 = t[s] --test and test2 are unknow
 ]]
 
@@ -3387,7 +3455,7 @@ local n
 ---@type string
 local s
 
-local test  = t[n] 
+local test  = t[n]
 local <?test2?> = t[s] --test and test2 are unknow
 ]]
 

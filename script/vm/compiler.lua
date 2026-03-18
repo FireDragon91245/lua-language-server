@@ -1,12 +1,12 @@
-local guide      = require 'parser.guide'
-local util       = require 'utility'
-local config     = require 'config'
-local rpath      = require 'workspace.require-path'
-local files      = require 'files'
-local scope      = require 'workspace.scope'
+local guide  = require 'parser.guide'
+local util   = require 'utility'
+local config = require 'config'
+local rpath  = require 'workspace.require-path'
+local files  = require 'files'
+local scope  = require 'workspace.scope'
 ---@class vm
-local vm         = require 'vm.vm'
-local plugin     = require 'plugin'
+local vm     = require 'vm.vm'
+local plugin = require 'plugin'
 
 ---@class parser.object
 ---@field _compiledNodes        boolean
@@ -175,7 +175,7 @@ local function searchFieldByGlobalID(suri, source, key, pushResult)
     end
 end
 
-local VARARGKEY = {'<VARARGKEY>'}
+local VARARGKEY = { '<VARARGKEY>' }
 local function searchLiteralFieldFromTable(source, key, callback)
     local cache = source._literalFieldsCache
     local cache2 = source._literalFieldsCache2
@@ -219,7 +219,7 @@ local function searchLiteralFieldFromTable(source, key, callback)
         end
         return
     end
-    if type(key) == 'number'
+    if  type(key) == 'number'
     and key >= 1
     and math.tointeger(key) then
         value = cache[VARARGKEY]
@@ -339,8 +339,8 @@ end
 local searchFieldSwitch = util.switch()
     : case 'table'
     : call(function (_suri, source, key, pushResult)
-        if type(key) == 'string'
-        or type(key) == 'number' then
+        if     type(key) == 'string'
+        or     type(key) == 'number' then
             searchLiteralFieldFromTable(source, key, pushResult)
         elseif key == vm.ANY then
             for _, field in ipairs(source) do
@@ -356,7 +356,7 @@ local searchFieldSwitch = util.switch()
         if docs then
             for _, doc in ipairs(docs) do
                 if doc.type == 'doc.enum' then
-                    if not vm.docHasAttr(doc, 'partial')  then
+                    if not vm.docHasAttr(doc, 'partial') then
                         return
                     end
                     for _, def in ipairs(vm.getDefs(doc)) do
@@ -427,9 +427,9 @@ local searchFieldSwitch = util.switch()
                         or key == vm.ANYDOC
                         or fn.name == 'any'
                         or (fn.name == 'boolean' and type(key) == 'boolean')
-                        or (fn.name == 'number'  and type(key) == 'number')
+                        or (fn.name == 'number' and type(key) == 'number')
                         or (fn.name == 'integer' and math.tointeger(key))
-                        or (fn.name == 'string'  and type(key) == 'string') then
+                        or (fn.name == 'string' and type(key) == 'string') then
                             pushResult(field, true)
                         end
                     elseif fn.type == 'doc.type.string'
@@ -605,8 +605,8 @@ function vm.getClassFields(suri, object, key, pushResult)
                             if  not searchedFields[fieldKey]
                             and guide.isAssign(field)
                             and field.value then
-                                if  vm.getVariableID(field)
-                                and vm.getVariableID(field) == vm.getVariableID(field.value) then
+                                if     vm.getVariableID(field)
+                                and    vm.getVariableID(field) == vm.getVariableID(field.value) then
                                 elseif vm.getGlobalNode(src)
                                 and    vm.getGlobalNode(src) == vm.getGlobalNode(field.value) then
                                 else
@@ -781,7 +781,7 @@ local function getReturnOfSetMetaTable(args)
         end)
     end
     --过滤nil
-   node:remove 'nil'
+    node:remove 'nil'
     return node
 end
 
@@ -880,7 +880,7 @@ function vm.bindAs(source)
         return false
     end
 
-    local max = #ases
+    local max   = #ases
     local index
     local left  = 1
     local right = max
@@ -931,7 +931,7 @@ function vm.getNodesOfParentNode(source, key)
     for node in parentNode:eachObject() do
         if not hasClass
         or (
-                node.type == 'global'
+            node.type == 'global'
             and node.cate == 'type'
             ---@cast node vm.global
             and not guide.isBasicType(node.name)
@@ -1064,7 +1064,7 @@ local function selectNode(source, list, index)
                 rtnNode:merge(n)
             end
             if n.type == 'global' and n.cate == 'type' then
-                if  n.name ~= 'any' then
+                if n.name ~= 'any' then
                     rtnNode:merge(n)
                 end
             else
@@ -1087,7 +1087,7 @@ local function isValidCallArgNode(source, node)
     end
     if source.type == 'table' then
         return node.type == 'doc.type.table' or node.type == 'doc.type.array'
-            or (    node.type == 'global'
+            or (node.type == 'global'
                 and node.cate == 'type'
                 ---@cast node vm.global
                 and not guide.isBasicType(node.name)
@@ -1262,13 +1262,14 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                         end
                     end
                 end
-                debugCollectTrace(guide.getUri(call), 'compileCallArgNode.dealDocFunc', ('method=%s argIndex=%d farg=%s resolvedArg=%s self=%s'):format(
-                    call.node and guide.getKeyName(call.node) or 'nil',
-                    myIndex,
-                    debugCollectView(guide.getUri(call), farg),
-                    debugCollectView(guide.getUri(call), resolvedArg),
-                    debugCollectView(guide.getUri(call), resolvedSelfArg)
-                ))
+                debugCollectTrace(guide.getUri(call), 'compileCallArgNode.dealDocFunc',
+                    ('method=%s argIndex=%d farg=%s resolvedArg=%s self=%s'):format(
+                        call.node and guide.getKeyName(call.node) or 'nil',
+                        myIndex,
+                        debugCollectView(guide.getUri(call), farg),
+                        debugCollectView(guide.getUri(call), resolvedArg),
+                        debugCollectView(guide.getUri(call), resolvedSelfArg)
+                    ))
                 for fn in vm.compileNode(resolvedArg):eachObject() do
                     if isValidCallArgNode(arg, fn) then
                         local outputFn = fn
@@ -1301,11 +1302,12 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                                 outputFn = specialized
                             end
                         end
-                        debugCollectTrace(guide.getUri(call), 'compileCallArgNode.setNode', ('method=%s argIndex=%d output=%s'):format(
-                            call.node and guide.getKeyName(call.node) or 'nil',
-                            myIndex,
-                            debugCollectView(guide.getUri(call), outputFn)
-                        ))
+                        debugCollectTrace(guide.getUri(call), 'compileCallArgNode.setNode',
+                            ('method=%s argIndex=%d output=%s'):format(
+                                call.node and guide.getKeyName(call.node) or 'nil',
+                                myIndex,
+                                debugCollectView(guide.getUri(call), outputFn)
+                            ))
                         vm.setNode(arg, outputFn)
                     end
                 end
@@ -1323,8 +1325,8 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                     if fn.type == 'doc.type.function' then
                         ---@cast fn parser.object
                         if sign then
-                            local generic = vm.createGeneric(fn, sign)
-                            local args    = buildResolveArgs(myIndex - 1)
+                            local generic      = vm.createGeneric(fn, sign)
+                            local args         = buildResolveArgs(myIndex - 1)
                             local resolvedNode = generic:resolve(guide.getUri(call), args)
                             vm.setNode(arg, resolvedNode)
                             goto CONTINUE
@@ -1458,19 +1460,22 @@ function vm.compileCallArg(arg, call, index)
                 mergeMethodCandidates(receiver.value)
                 mergeClassMethodCandidates(receiver.value)
             end
-            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup', ('method=%s receiver=%s methodNode=%s'):format(
-                key,
-                debugCollectView(guide.getUri(call), receiver),
-                debugCollectView(guide.getUri(call), methodNode)
-            ))
-            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup.receiver-members', ('method=%s receiverMembers=[%s]'):format(
-                key,
-                debugCollectNodeMembers(guide.getUri(call), receiver and vm.compileNode(receiver) or nil)
-            ))
-            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup.members', ('method=%s members=[%s]'):format(
-                key,
-                debugCollectNodeMembers(guide.getUri(call), methodNode)
-            ))
+            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup',
+                ('method=%s receiver=%s methodNode=%s'):format(
+                    key,
+                    debugCollectView(guide.getUri(call), receiver),
+                    debugCollectView(guide.getUri(call), methodNode)
+                ))
+            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup.receiver-members',
+                ('method=%s receiverMembers=[%s]'):format(
+                    key,
+                    debugCollectNodeMembers(guide.getUri(call), receiver and vm.compileNode(receiver) or nil)
+                ))
+            debugCollectTrace(guide.getUri(call), 'vm.compileCallArg.methodLookup.members',
+                ('method=%s members=[%s]'):format(
+                    key,
+                    debugCollectNodeMembers(guide.getUri(call), methodNode)
+                ))
             if not methodNode:isEmpty() then
                 callNode = narrowCallArgNodeByCallNode(methodNode)
             end
@@ -1533,7 +1538,7 @@ local function compileForVars(source, target)
             type = 'dummyfunc',
             parent = source,
         }
-        source._iterArgs = {{},{}}
+        source._iterArgs = { {}, {} }
         source._iterVars = {}
     end
     -- iterator
@@ -1569,7 +1574,7 @@ local function buildCallArgsWithImplicitSelf(func, args)
     local newArgs = { func }
     if args then
         for i = 1, #args do
-            newArgs[#newArgs + 1] = args[i]
+            newArgs[#newArgs+1] = args[i]
         end
     end
     return newArgs
@@ -1716,24 +1721,26 @@ local function compileFunctionParam(func, source)
     ---@cast aindex integer
 
     local funcNode = vm.compileNode(func)
-    debugCollectTrace(guide.getUri(func), 'compileFunctionParam.enter', ('param=%s index=%d func=%s funcNode=%s parent=%s'):format(
-        source[1] or '?',
-        aindex,
-        func.type,
-        debugCollectView(guide.getUri(func), funcNode),
-        func.parent.type
-    ))
+    debugCollectTrace(guide.getUri(func), 'compileFunctionParam.enter',
+        ('param=%s index=%d func=%s funcNode=%s parent=%s'):format(
+            source[1] or '?',
+            aindex,
+            func.type,
+            debugCollectView(guide.getUri(func), funcNode),
+            func.parent.type
+        ))
     if func.parent.type == 'callargs' then
         -- local call ---@type fun(f: fun(x: number));call(function (x) end) --> x -> number
         local foundCandidate = false
         for n in funcNode:eachObject() do
             if n.type == 'doc.type.function' and n.args[aindex] then
                 foundCandidate = true
-                debugCollectTrace(guide.getUri(func), 'compileFunctionParam.callargs.candidate', ('param=%s candidate=%s candidateArg=%s'):format(
-                    source[1] or '?',
-                    debugCollectView(guide.getUri(func), n),
-                    debugCollectView(guide.getUri(func), n.args[aindex])
-                ))
+                debugCollectTrace(guide.getUri(func), 'compileFunctionParam.callargs.candidate',
+                    ('param=%s candidate=%s candidateArg=%s'):format(
+                        source[1] or '?',
+                        debugCollectView(guide.getUri(func), n),
+                        debugCollectView(guide.getUri(func), n.args[aindex])
+                    ))
                 local argNode = vm.compileNode(n.args[aindex])
                 for an in argNode:eachObject() do
                     if an.type ~= 'doc.generic.name' then
@@ -1771,7 +1778,7 @@ local function compileFunctionParam(func, source)
         ]]
         local found = false
         for n in funcNode:eachObject() do
-            if (n.type == 'doc.type.function' or n.type == 'function')
+            if  (n.type == 'doc.type.function' or n.type == 'function')
             and n.args[aindex] and n.args[aindex] ~= source
             then
                 local argNode = vm.compileNode(n.args[aindex])
@@ -1840,19 +1847,21 @@ local function compileFunctionParam(func, source)
             if not node then
                 goto continue
             end
-            debugCollectTrace(guide.getUri(func), 'compileFunctionParam.local-callback.node', ('param=%s callbackIndex=%d node=%s'):format(
-                source[1] or '?',
-                cbIndex,
-                debugCollectView(guide.getUri(func), node)
-            ))
+            debugCollectTrace(guide.getUri(func), 'compileFunctionParam.local-callback.node',
+                ('param=%s callbackIndex=%d node=%s'):format(
+                    source[1] or '?',
+                    cbIndex,
+                    debugCollectView(guide.getUri(func), node)
+                ))
             for n in node:eachObject() do
                 -- check if the inferred function has arg at `aindex`
                 if n.type == 'doc.type.function' and n.args and n.args[aindex] then
-                    debugCollectTrace(guide.getUri(func), 'compileFunctionParam.local-callback.candidate', ('param=%s candidate=%s candidateArg=%s'):format(
-                        source[1] or '?',
-                        debugCollectView(guide.getUri(func), n),
-                        debugCollectView(guide.getUri(func), n.args[aindex])
-                    ))
+                    debugCollectTrace(guide.getUri(func), 'compileFunctionParam.local-callback.candidate',
+                        ('param=%s candidate=%s candidateArg=%s'):format(
+                            source[1] or '?',
+                            debugCollectView(guide.getUri(func), n),
+                            debugCollectView(guide.getUri(func), n.args[aindex])
+                        ))
                     -- use type info on this `aindex` arg
                     local argNode = vm.compileNode(n.args[aindex])
                     for an in argNode:eachObject() do
@@ -2039,7 +2048,9 @@ local function bindReturnOfFunction(source, mfunc, index, args)
     local returnObject = vm.getReturnOfFunction(mfunc, index)
     if not returnObject then
         vm.setNode(source, vm.declareGlobal('type', 'nil'))
-        debugCollectTrace(uri, 'bindReturnOfFunction', ('func=%s return=nil args=[%s]'):format(source.func and guide.getKeyName(source.func) or mfunc.type, debugCollectArgsView(uri, args)))
+        debugCollectTrace(uri, 'bindReturnOfFunction',
+            ('func=%s return=nil args=[%s]'):format(source.func and guide.getKeyName(source.func) or mfunc.type,
+                debugCollectArgsView(uri, args)))
         return
     end
 
@@ -2054,7 +2065,7 @@ local function bindReturnOfFunction(source, mfunc, index, args)
                 resolveArgs = { receiver }
                 if args then
                     for i = 1, #args do
-                        resolveArgs[#resolveArgs + 1] = args[i]
+                        resolveArgs[#resolveArgs+1] = args[i]
                     end
                 end
             end
@@ -2253,6 +2264,53 @@ local function bindReturnOfCallOperator(source, func, operator, index)
         return
     end
 
+    ---@param signs parser.object[]?
+    ---@return boolean
+    local function isOperatorSignArityMatched(signs)
+        local classSet = operator.class
+        if not classSet or classSet.type ~= 'doc.class' or not classSet.signs then
+            return true
+        end
+        if not signs then
+            return false
+        end
+        return #classSet.signs == #signs
+    end
+
+    ---@param signs parser.object[]?
+    ---@return table<string, vm.node>?
+    local function getOperatorGenericMap(signs)
+        local classSet = operator.class
+        if not classSet or classSet.type ~= 'doc.class' or not classSet.signs then
+            return nil
+        end
+        if not signs or #classSet.signs ~= #signs then
+            return nil
+        end
+        local resolved = {}
+        for i, signName in ipairs(classSet.signs) do
+            local signType = signs[i]
+            if signType and signName[1] then
+                resolved[signName[1]] = vm.compileNode(signType)
+            end
+        end
+        if next(resolved) then
+            return resolved
+        end
+        return nil
+    end
+
+    ---@type parser.object?
+    local operatorReturn = operator.extends
+    if operator.returns then
+        operatorReturn = operator.returns[index]
+    elseif index ~= 1 then
+        operatorReturn = nil
+    end
+    if not operatorReturn then
+        return
+    end
+
     local uri = guide.getUri(source)
     local actualFunc = func.exp or func
     local receiverNode = vm.compileNode(actualFunc)
@@ -2260,7 +2318,7 @@ local function bindReturnOfCallOperator(source, func, operator, index)
     local matched = false
     local result = vm.createNode()
     for receiver in receiverNode:eachObject() do
-        if receiver.type ~= 'doc.type.sign'
+        if  receiver.type ~= 'doc.type.sign'
         and not (receiver.type == 'global' and receiver.cate == 'type')
         and receiver.type ~= 'doc.type.table'
         and receiver.type ~= 'doc.type.array' then
@@ -2269,34 +2327,35 @@ local function bindReturnOfCallOperator(source, func, operator, index)
         if expNode and vm.isSubType(uri, receiver, expNode) == false then
             goto CONTINUE
         end
+        if receiver.type == 'doc.type.sign' and not isOperatorSignArityMatched(receiver.signs) then
+            goto CONTINUE
+        end
         matched = true
-        local resolvedExtends = operator.extends
-        if receiver.type == 'doc.type.sign'
+        ---@type parser.object|vm.generic
+        local resolvedExtends = operatorReturn
+        if  receiver.type == 'doc.type.sign'
         and receiver.node
         and receiver.node[1]
         and receiver.signs then
-            local classGlobal = vm.getGlobal('type', receiver.node[1])
-            if classGlobal then
-                local genericMap = vm.getClassGenericMap(uri, classGlobal, receiver.signs)
-                if genericMap then
-                    resolvedExtends = vm.cloneObject(operator.extends, genericMap) or resolvedExtends
-                end
+            local genericMap = getOperatorGenericMap(receiver.signs)
+            if genericMap then
+                resolvedExtends = vm.cloneObject(operatorReturn, genericMap) or resolvedExtends
             end
-            if resolvedExtends == operator.extends
+            if  resolvedExtends == operatorReturn
             and not operator.exp
-            and operator.extends.type == 'doc.type.sign'
-            and operator.extends.node
-            and operator.extends.node[1] == receiver.node[1]
-            and operator.extends.signs
-            and #operator.extends.signs == 1
+            and operatorReturn.type == 'doc.type.sign'
+            and operatorReturn.node
+            and operatorReturn.node[1] == receiver.node[1]
+            and operatorReturn.signs
+            and #operatorReturn.signs == 1
             and receiver.signs[1] then
-                local sign = operator.extends.signs[1]
+                local sign = operatorReturn.signs[1]
                 if sign.type == 'doc.generic.name' or sign.type == 'doc.type.name' then
                     resolvedExtends = receiver.signs[1]
                 end
             end
         end
-        if resolvedExtends == operator.extends and actualFunc.bindDocs then
+        if resolvedExtends == operatorReturn and actualFunc.bindDocs then
             for _, doc in ipairs(actualFunc.bindDocs) do
                 if doc.type ~= 'doc.type' then
                     goto NEXT_DOC
@@ -2308,22 +2367,25 @@ local function bindReturnOfCallOperator(source, func, operator, index)
                     or not typeUnit.signs then
                         goto NEXT_TYPE_UNIT
                     end
+                    if not isOperatorSignArityMatched(typeUnit.signs) then
+                        goto NEXT_TYPE_UNIT
+                    end
                     local classGlobal = vm.getGlobal('type', typeUnit.node[1])
                     if classGlobal then
-                        local genericMap = vm.getClassGenericMap(uri, classGlobal, typeUnit.signs)
+                        local genericMap = getOperatorGenericMap(typeUnit.signs)
                         if genericMap then
-                            resolvedExtends = vm.cloneObject(operator.extends, genericMap) or resolvedExtends
+                            resolvedExtends = vm.cloneObject(operatorReturn, genericMap) or resolvedExtends
                             break
                         end
-                        if resolvedExtends == operator.extends
+                        if  resolvedExtends == operatorReturn
                         and not operator.exp
-                        and operator.extends.type == 'doc.type.sign'
-                        and operator.extends.node
-                        and operator.extends.node[1] == typeUnit.node[1]
-                        and operator.extends.signs
-                        and #operator.extends.signs == 1
+                        and operatorReturn.type == 'doc.type.sign'
+                        and operatorReturn.node
+                        and operatorReturn.node[1] == typeUnit.node[1]
+                        and operatorReturn.signs
+                        and #operatorReturn.signs == 1
                         and typeUnit.signs[1] then
-                            local sign = operator.extends.signs[1]
+                            local sign = operatorReturn.signs[1]
                             if sign.type == 'doc.generic.name' or sign.type == 'doc.type.name' then
                                 resolvedExtends = typeUnit.signs[1]
                                 break
@@ -2352,28 +2414,32 @@ local function bindReturnOfCallOperator(source, func, operator, index)
                 or not typeUnit.node[1] then
                     goto NEXT_BIND_TYPE
                 end
+                if typeUnit.signs and not isOperatorSignArityMatched(typeUnit.signs) then
+                    goto NEXT_BIND_TYPE
+                end
                 if expNode and vm.isSubType(uri, typeUnit, expNode) == false then
                     goto NEXT_BIND_TYPE
                 end
                 matched = true
-                local resolvedExtends = operator.extends
+                ---@type parser.object|vm.generic
+                local resolvedExtends = operatorReturn
                 local classGlobal = vm.getGlobal('type', typeUnit.node[1])
                 if classGlobal and typeUnit.signs then
-                    local genericMap = vm.getClassGenericMap(uri, classGlobal, typeUnit.signs)
+                    local genericMap = getOperatorGenericMap(typeUnit.signs)
                     if genericMap then
-                        resolvedExtends = vm.cloneObject(operator.extends, genericMap) or resolvedExtends
+                        resolvedExtends = vm.cloneObject(operatorReturn, genericMap) or resolvedExtends
                     end
                 end
-                if resolvedExtends == operator.extends
+                if  resolvedExtends == operatorReturn
                 and not operator.exp
-                and operator.extends.type == 'doc.type.sign'
-                and operator.extends.node
-                and operator.extends.node[1] == typeUnit.node[1]
-                and operator.extends.signs
-                and #operator.extends.signs == 1
+                and operatorReturn.type == 'doc.type.sign'
+                and operatorReturn.node
+                and operatorReturn.node[1] == typeUnit.node[1]
+                and operatorReturn.signs
+                and #operatorReturn.signs == 1
                 and typeUnit.signs
                 and typeUnit.signs[1] then
-                    local sign = operator.extends.signs[1]
+                    local sign = operatorReturn.signs[1]
                     if sign.type == 'doc.generic.name' or sign.type == 'doc.type.name' then
                         resolvedExtends = typeUnit.signs[1]
                     end
@@ -2434,8 +2500,8 @@ local compilerSwitch = util.switch()
         or source.parent.type == 'setindex' then
             local parentNode = vm.compileNode(source.parent)
             for _, pn in ipairs(parentNode) do
-                if  pn.type == 'global'
-                and pn.cate == 'type' then
+                if     pn.type == 'global'
+                and    pn.cate == 'type' then
                     ---@cast pn vm.global
                     if not guide.isBasicType(pn.name) then
                         vm.setNode(source, pn)
@@ -2695,7 +2761,6 @@ local compilerSwitch = util.switch()
                 vm.setNode(source, vm.compileNode(source.value))
             end
         end
-
     end)
     : case 'field'
     : case 'method'
@@ -2879,7 +2944,7 @@ local compilerSwitch = util.switch()
             return
         end
         local funcNode = vm.compileNode(func)
-        if (func.type == 'getfield' or func.type == 'getmethod')
+        if  (func.type == 'getfield' or func.type == 'getmethod')
         and vm.getInfer(funcNode):view(guide.getUri(source)) == 'unknown' then
             local key = guide.getKeyName(func)
             if key then
@@ -3037,8 +3102,8 @@ local compilerSwitch = util.switch()
     : call(function (source)
         if source[1] == 'self' then
             local state = guide.getDocState(source)
-            if state.type == 'doc.return'
-            or state.type == 'doc.param' then
+            if     state.type == 'doc.return'
+            or     state.type == 'doc.param' then
                 local func = state.bindSource
                 if func and func.type == 'function' then
                     local node = guide.getFunctionSelfNode(func)
@@ -3264,7 +3329,7 @@ local function compileByNode(source)
     compilerSwitch(source.type, source)
 end
 
-local nodeSwitch;nodeSwitch = util.switch()
+local nodeSwitch; nodeSwitch = util.switch()
     : case 'field'
     : case 'method'
     : call(function (source, lastKey, pushResult)
