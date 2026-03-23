@@ -354,25 +354,77 @@ function vm.countList(list, mark)
     return min, max, def
 end
 
+local getReceiverGenericMap
+local mergeResolvedGenerics
+
+---@param callFunc parser.object?
+---@param args parser.object[]?
+---@return boolean
+local function hasMethodSelfArg(callFunc, args)
+    return callFunc and callFunc.type == 'getmethod'
+       and args and args[1] and args[1].type == 'self'
+       or false
+end
+
+---@param callFunc parser.object?
+---@param args parser.object[]?
+---@param func parser.object
+---@return integer
+local function getMethodArgOffset(callFunc, args, func)
+    if not callFunc or callFunc.type ~= 'getmethod' then
+        return 0
+    end
+    if hasMethodSelfArg(callFunc, args) then
+        return 0
+    end
+    local firstArg = func.args and func.args[1]
+    if not firstArg then
+        return 0
+    end
+    if firstArg.type == 'self' then
+        return 1
+    end
+    if firstArg.name and firstArg.name[1] == 'self' then
+        return 1
+    end
+    return 0
+end
+
 ---@param uri uri
+---@param callFunc parser.object?
 ---@param args parser.object[]
 ---@param func parser.object
 ---@return boolean
-local function isAllParamMatched(uri, args, params, func)
+local function isAllParamMatched(uri, callFunc, args, params, func)
     if not params then
         return false
     end
     local resolved
     local sign = vm.getSign(func)
-    if sign then
-        resolved = sign:resolve(uri, args)
+    local resolveArgs = args
+    if sign and args then
+        if callFunc and callFunc.type == 'getmethod' and not hasMethodSelfArg(callFunc, args) and #sign.signList ~= #args then
+            local receiver = callFunc.node
+            if receiver then
+                resolveArgs = { receiver }
+                for i = 1, #args do
+                    resolveArgs[#resolveArgs+1] = args[i]
+                end
+            end
+        end
     end
+    if sign then
+        resolved = sign:resolve(uri, resolveArgs)
+    end
+    resolved = mergeResolvedGenerics(resolved, getReceiverGenericMap(uri, callFunc))
+    local argOffset = getMethodArgOffset(callFunc, args, func)
     for i = 1, #args do
-        if not params[i] then
-            break
+        local param = params[i + argOffset]
+        if not param then
+            return false
         end
         local argNode = vm.compileNode(args[i])
-        local defObj = params[i]
+        local defObj = param
         if resolved and next(resolved) then
             defObj = vm.cloneObject(defObj, resolved) or defObj
         end
@@ -385,12 +437,14 @@ local function isAllParamMatched(uri, args, params, func)
 end
 
 ---@param uri uri
+---@param callFunc parser.object?
 ---@param args parser.object[]
 ---@param func parser.object
 ---@param index integer
 ---@return parser.object|vm.generic?
-local function getResolvedParamObject(uri, args, func, index)
-    local param = func.args and func.args[index]
+local function getResolvedParamObject(uri, callFunc, args, func, index)
+    local argOffset = getMethodArgOffset(callFunc, args, func)
+    local param = func.args and func.args[index + argOffset]
     if not param then
         return nil
     end
@@ -398,11 +452,187 @@ local function getResolvedParamObject(uri, args, func, index)
     if not sign then
         return param
     end
-    local resolved = sign:resolve(uri, args)
+    local resolveArgs = args
+    if callFunc and callFunc.type == 'getmethod' and args and not hasMethodSelfArg(callFunc, args) and #sign.signList ~= #args then
+        local receiver = callFunc.node
+        if receiver then
+            resolveArgs = { receiver }
+            for i = 1, #args do
+                resolveArgs[#resolveArgs+1] = args[i]
+            end
+        end
+    end
+    local resolved = sign:resolve(uri, resolveArgs)
+    resolved = mergeResolvedGenerics(resolved, getReceiverGenericMap(uri, callFunc))
     if not resolved or not next(resolved) then
         return param
     end
     return vm.cloneObject(param, resolved) or param
+end
+
+---@param uri uri
+---@param callFunc parser.object?
+---@return table<string, vm.node>?
+function getReceiverGenericMap(uri, callFunc)
+    if not callFunc or callFunc.type ~= 'getmethod' then
+        return nil
+    end
+    local receiver = callFunc.node
+    if receiver and receiver.type == 'getlocal' then
+        receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+    end
+    if not receiver then
+        return nil
+    end
+    local receiverNode = vm.compileNode(receiver)
+    for item in receiverNode:eachObject() do
+        if item.type == 'doc.type.sign' and item.node and item.node[1] and item.signs then
+            local classGlobal = vm.getGlobal('type', item.node[1])
+            if classGlobal then
+                local genericMap = vm.getClassGenericMap(uri, classGlobal, item.signs)
+                if genericMap then
+                    return genericMap
+                end
+            end
+        end
+    end
+    return nil
+end
+
+---@param resolved table<string, vm.node>?
+---@param receiverGenericMap table<string, vm.node>?
+---@return table<string, vm.node>?
+function mergeResolvedGenerics(resolved, receiverGenericMap)
+    if not receiverGenericMap then
+        return resolved
+    end
+    local merged = resolved or {}
+    for name, node in pairs(receiverGenericMap) do
+        if not merged[name] then
+            merged[name] = node
+        end
+    end
+    if next(merged) then
+        return merged
+    end
+    return nil
+end
+
+---@param func parser.object
+---@return parser.object?
+local function getMethodSelfDoc(func)
+    if func.args and func.args[1] and func.args[1].name and func.args[1].name[1] == 'self' then
+        return func.args[1].extends
+    end
+    local docs = getFunctionDocs(func)
+    if not docs then
+        return nil
+    end
+    for _, doc in ipairs(docs) do
+        if doc.type == 'doc.param'
+        and doc.param
+        and doc.param[1] == 'self'
+        and doc.extends then
+            return doc.extends
+        end
+    end
+    return nil
+end
+
+---@param view string?
+---@return string?, integer?
+local function getStructuredTypeInfo(view)
+    if not view then
+        return nil, nil
+    end
+    local baseName, signText = view:match('^([%w_%.]+)%s*<(.+)>$')
+    if not baseName then
+        local plainName = view:match('^([%w_%.]+)$')
+        if plainName then
+            return plainName, 0
+        end
+        return nil, nil
+    end
+    local depth = 0
+    local arity = 1
+    for i = 1, #signText do
+        local ch = signText:sub(i, i)
+        if ch == '<' or ch == '(' or ch == '{' or ch == '[' then
+            depth = depth + 1
+        elseif ch == '>' or ch == ')' or ch == '}' or ch == ']' then
+            depth = depth - 1
+        elseif ch == ',' and depth == 0 then
+            arity = arity + 1
+        end
+    end
+    return baseName, arity
+end
+
+---@param uri uri
+---@param callFunc parser.object
+---@param args parser.object[]
+---@param func parser.object
+---@return integer
+local function getMethodSelfSpecificityScore(uri, callFunc, args, func)
+    if callFunc.type ~= 'getmethod' then
+        return 0
+    end
+    local receiver = callFunc.node
+    if not receiver then
+        return 0
+    end
+    local selfDoc = getMethodSelfDoc(func)
+    if not selfDoc then
+        return 0
+    end
+    local receiverNode = vm.compileNode(receiver)
+    local selfObject = selfDoc
+    local receiverGenericMap = getReceiverGenericMap(uri, callFunc)
+    local sign = vm.getSign(func)
+    if sign then
+        local resolvedArgs = args
+        if not hasMethodSelfArg(callFunc, args) and #sign.signList ~= #args then
+            resolvedArgs = { receiver }
+            for i = 1, #args do
+                resolvedArgs[#resolvedArgs+1] = args[i]
+            end
+        end
+        local resolved = sign:resolve(uri, resolvedArgs)
+        resolved = mergeResolvedGenerics(resolved, receiverGenericMap)
+        if resolved and next(resolved) then
+            local clonedSelfObject = vm.cloneObject(selfDoc, resolved)
+            if clonedSelfObject and clonedSelfObject.type ~= 'generic' then
+                ---@cast clonedSelfObject parser.object
+                selfObject = clonedSelfObject
+            end
+        end
+    elseif receiverGenericMap then
+        local clonedSelfObject = vm.cloneObject(selfDoc, receiverGenericMap)
+        if clonedSelfObject and clonedSelfObject.type ~= 'generic' then
+            ---@cast clonedSelfObject parser.object
+            selfObject = clonedSelfObject
+        end
+    end
+    local selfNode = vm.compileNode(selfObject)
+    if not vm.canCastType(uri, selfNode, receiverNode) then
+        return -50
+    end
+    local receiverView = vm.getInfer(receiverNode):view(uri)
+    local selfView = vm.getInfer(selfNode):view(uri)
+    if receiverView and selfView and receiverView == selfView then
+        return 16
+    end
+    local receiverName, receiverArity = getStructuredTypeInfo(receiverView)
+    local selfName, selfArity = getStructuredTypeInfo(selfView)
+    if receiverName and selfName and receiverName == selfName then
+        if receiverArity == selfArity then
+            return 12
+        end
+        if selfArity and selfArity > 0 then
+            return -12
+        end
+    end
+    return 4
 end
 
 ---@param param parser.object?
@@ -678,6 +908,68 @@ local function hasExactLiteralMatch(arg, param)
     return false
 end
 
+---@param param parser.object?
+---@return parser.object?
+local function getFunctionParamProto(param)
+    if not param then
+        return nil
+    end
+    if param.type == 'doc.type.arg' and param.extends then
+        param = param.extends
+    end
+    if param.type == 'doc.type' and param.types and #param.types == 1 then
+        param = param.types[1]
+    end
+    if param.type == 'doc.type.function' then
+        return param
+    end
+    return nil
+end
+
+---@param actual parser.object?
+---@param expected parser.object?
+---@return integer
+local function getCallbackSpecificityScore(actual, expected)
+    if not actual or actual.type ~= 'function' then
+        return 0
+    end
+    local expectedFunc = getFunctionParamProto(expected)
+    if not expectedFunc then
+        return 0
+    end
+
+    local actualMin, actualMax, actualDef = vm.countParamsOfFunction(actual)
+    local expectedMin, expectedMax, expectedDef = vm.countParamsOfFunction(expectedFunc)
+    local actualRetMin, actualRetMax, actualRetDef = vm.countReturnsOfFunction(actual)
+    local expectedRetMin, expectedRetMax, expectedRetDef = vm.countReturnsOfFunction(expectedFunc)
+
+    local score = 0
+
+    if expectedMax ~= math.huge then
+        if actualMax == expectedMax and actualDef == expectedDef then
+            score = score + 18
+        elseif actualMax > expectedMax then
+            score = score - 10
+        elseif actualMin == expectedMin then
+            score = score + 4
+        end
+    end
+
+    if expectedRetMax ~= math.huge then
+        if actualRetMax < expectedRetMin then
+            score = score - 20
+        elseif actualRetMax == expectedRetMax and actualRetDef == expectedRetDef then
+            score = score + 14
+        elseif actualRetDef == expectedRetDef then
+            score = score + 6
+        elseif actualRetDef < expectedRetDef then
+            score = score - 8
+        end
+    end
+
+    return score
+end
+
 ---@param func parser.object
 ---@return boolean
 local function hasExplicitReturns(func)
@@ -695,21 +987,30 @@ local function hasExplicitReturns(func)
 end
 
 ---@param uri uri
+---@param callFunc parser.object?
 ---@param args parser.object[]
 ---@param func parser.object
 ---@return number
-local function calcFunctionMatchScore(uri, args, func)
+local function calcFunctionMatchScore(uri, callFunc, args, func)
     if vm.isVarargFunctionWithOverloads(func)
     or vm.isFunctionWithOnlyOverloads(func)
-    or not isAllParamMatched(uri, args, func.args, func)
+    or not isAllParamMatched(uri, callFunc, args, func.args, func)
     then
         return -1
     end
     local matchScore = getFunctionArityPriority(args, func) * 10
-    for i = 1, math.min(#args, #func.args) do
+    if callFunc and callFunc.type == 'getmethod' then
+        matchScore = matchScore + getMethodSelfSpecificityScore(uri, callFunc, args, func)
+    end
+    local argOffset = getMethodArgOffset(callFunc, args, func)
+    for i = 1, math.min(#args, #func.args - argOffset) do
         local arg = args[i]
-        local originalParam = func.args[i]
-        local resolvedParam = getResolvedParamObject(uri, args, func, i) or originalParam
+        local originalParam = func.args[i + argOffset]
+        local resolvedParam = getResolvedParamObject(uri, callFunc, args, func, i) or originalParam
+        local isReceiverArg = callFunc
+            and callFunc.type == 'getmethod'
+            and arg.type == 'self'
+            and (originalParam.type == 'self' or (originalParam.name and originalParam.name[1] == 'self'))
         ---@type parser.object
         local param = originalParam
         if resolvedParam and resolvedParam.type ~= 'generic' then
@@ -725,6 +1026,7 @@ local function calcFunctionMatchScore(uri, args, func)
             end
         end
         matchScore = matchScore + getParamSpecificityScore(uri, arg, param)
+        matchScore = matchScore + getCallbackSpecificityScore(arg, param)
         local _, literalsCount = vm.getLiterals(param)
         if hasExactLiteralMatch(arg, param) then
             matchScore = matchScore + math.max(1, 12 / math.max(literalsCount, 1))
@@ -732,6 +1034,7 @@ local function calcFunctionMatchScore(uri, args, func)
         local argView = vm.getInfer(arg):view(uri)
         local paramView = vm.getInfer(param):view(uri)
         if hasStructuredGenericParam(originalParam)
+        and not isReceiverArg
         and arg.type ~= 'function'
         and argView and paramView then
             if argView == paramView then
@@ -749,9 +1052,10 @@ end
 
 ---@param uri uri
 ---@param args parser.object[]
+---@param callFunc parser.object?
 ---@param funcs parser.object[]
 ---@return parser.object[]
-local function filterExplicitTableOverloads(uri, args, funcs)
+local function filterExplicitTableOverloads(uri, args, callFunc, funcs)
     local filtered = funcs
     for i = 1, #args do
         if not isExplicitTableArg(uri, args[i]) then
@@ -759,7 +1063,8 @@ local function filterExplicitTableOverloads(uri, args, funcs)
         end
         local explicit = {}
         for _, func in ipairs(filtered) do
-            local param = func.args and func.args[i]
+            local argOffset = getMethodArgOffset(callFunc, args, func)
+            local param = func.args and func.args[i + argOffset]
             if hasExplicitTableParam(uri, param) then
                 explicit[#explicit + 1] = func
             end
@@ -771,7 +1076,8 @@ local function filterExplicitTableOverloads(uri, args, funcs)
         if isStructuredTableArg(args[i]) then
             local specialized = {}
             for _, func in ipairs(filtered) do
-                local param = getTableParamProto(getResolvedParamObject(uri, args, func, i) or (func.args and func.args[i]))
+                local argOffset = getMethodArgOffset(callFunc, args, func)
+                local param = getTableParamProto(getResolvedParamObject(uri, callFunc, args, func, i) or (func.args and func.args[i + argOffset]))
                 if hasExplicitTableParam(uri, param)
                 and isSpecializedTableParam(param) then
                     specialized[#specialized + 1] = func
@@ -787,16 +1093,22 @@ local function filterExplicitTableOverloads(uri, args, funcs)
 end
 
 ---@param args parser.object[]
+---@param callFunc parser.object?
 ---@param funcs parser.object[]
 ---@return parser.object[]
-local function filterExactArityOverloads(args, funcs)
+local function filterExactArityOverloads(args, callFunc, funcs)
     local amin, amax = vm.countList(args)
     if amin ~= amax then
         return funcs
     end
     local exact = {}
     for _, func in ipairs(funcs) do
+        local argOffset = getMethodArgOffset(callFunc, args, func)
         local _, max, def = vm.countParamsOfFunction(func)
+        if max ~= math.huge then
+            max = max - argOffset
+        end
+        def = def - argOffset
         if max == amax and def == amax then
             exact[#exact + 1] = func
         end
@@ -824,17 +1136,17 @@ function vm.getExactMatchedFunctions(func, args)
         return funcs
     end
     local uri = guide.getUri(func)
-    funcs = filterExplicitTableOverloads(uri, args, funcs)
+    funcs = filterExplicitTableOverloads(uri, args, func, funcs)
     if #funcs == 1 then
         return funcs
     end
-    funcs = filterExactArityOverloads(args, funcs)
+    funcs = filterExactArityOverloads(args, func, funcs)
     if #funcs == 1 then
         return funcs
     end
     local matchScores = {}
     for i, n in ipairs(funcs) do
-        matchScores[i] = calcFunctionMatchScore(uri, args, n)
+        matchScores[i] = calcFunctionMatchScore(uri, func, args, n)
     end
 
     local maxMatchScore = math.max(table.unpack(matchScores))
@@ -879,7 +1191,12 @@ function vm.getMatchedFunctions(func, args, mark)
 
     local matched = {}
     for _, n in ipairs(funcs) do
+        local argOffset = getMethodArgOffset(func, args, n)
         local min, max = vm.countParamsOfFunction(n)
+        min = math.max(0, min - argOffset)
+        if max ~= math.huge then
+            max = math.max(0, max - argOffset)
+        end
         if amin >= min and amax <= max then
             matched[#matched+1] = n
         end

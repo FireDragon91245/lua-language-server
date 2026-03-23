@@ -726,19 +726,24 @@ end
 ---@return (parser.object|vm.generic)?
 function vm.getReturnOfFunction(func, index)
     if func.type == 'function' then
-        if not func._returns then
-            func._returns = {}
+        local returns = func._returns
+        if not returns then
+            returns = {}
+            func._returns = returns
         end
-        if not func._returns[index] then
+        local returnObject = returns[index]
+        if not returnObject then
             ---@diagnostic disable-next-line: missing-fields
-            func._returns[index] = {
+            returnObject = {
                 type        = 'function.return',
                 parent      = func,
                 returnIndex = index,
             }
-            vm.compileNode(func._returns[index])
+            returns[index] = returnObject
+            vm.compileNode(returnObject)
         end
-        return func._returns[index]
+        returns = func._returns or returns
+        return returns[index] or returnObject
     end
     if func.type == 'doc.type.function' then
         local rtn = func.returns[index]

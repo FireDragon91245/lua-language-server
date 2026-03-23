@@ -81,6 +81,21 @@ local function clearFunctionBodyCaches(func)
             end
         end
     end
+
+    guide.eachSource(func, function (source)
+        if source ~= func then
+            vm.removeNode(source)
+        end
+        if source.type == 'call' and source.node then
+            local cachedCallReturns = rawget(source.node, '_callReturns')
+            if cachedCallReturns then
+                for _, ret in ipairs(cachedCallReturns) do
+                    vm.removeNode(ret)
+                end
+                rawset(source.node, '_callReturns', nil)
+            end
+        end
+    end)
 end
 
 ---@param node vm.node
@@ -500,16 +515,43 @@ function mt:resolve(uri, args)
                     or n.type == 'doc.type.function' then
                         ---@cast n parser.object
                         local specializedArgNodes = {}
+                        local specializedArgCache = {}
+                        local specializedArgs = false
+
+                        ---@param source parser.object
+                        local function saveOriginalNode(source)
+                            if specializedArgCache[source] ~= nil then
+                                return
+                            end
+                            local cached = vm.getNode(source)
+                            specializedArgCache[source] = cached or false
+                        end
+
+                        local function restoreSpecializedArgs()
+                            if not specializedArgs then
+                                return
+                            end
+                            for source, cached in pairs(specializedArgCache) do
+                                vm.removeNode(source)
+                                if cached ~= false then
+                                    vm.setNode(source, cached, true)
+                                end
+                            end
+                            clearFunctionBodyCaches(n)
+                        end
+
                         if n.type == 'function' and n.args and resolvedCallbackArgs then
-                            local specializedArgs = false
                             for argIndex, expectedArg in ipairs(resolvedCallbackArgs) do
                                 local actualArg = n.args[argIndex]
                                 if actualArg and expectedArg.extends then
                                     local specializedNode = vm.compileNode(expectedArg.extends)
+                                    saveOriginalNode(actualArg)
+                                    vm.removeNode(actualArg)
                                     vm.setNode(actualArg, specializedNode, true)
                                     specializedArgNodes[actualArg] = specializedNode
                                     if actualArg.ref then
                                         for _, ref in ipairs(actualArg.ref) do
+                                            saveOriginalNode(ref)
                                             vm.removeNode(ref)
                                             vm.setNode(ref, specializedNode, true)
                                         end
@@ -523,6 +565,7 @@ function mt:resolve(uri, args)
                         end
                         local fret = vm.getReturnOfFunction(n, i)
                         local fretNode
+                        local usedDirectReturn = false
                         if fret then
                             fretNode = vm.compileNode(fret)
                         end
@@ -542,9 +585,10 @@ function mt:resolve(uri, args)
                             end
                         end
                         debugCollectTrace(uri, 'sign.resolve.callback.return', ('index=%d source=%s fret=%s'):format(i, n.type, debugCollectView(uri, fretNode)))
+                        local fretView = fretNode and vm.getInfer(fretNode):view(uri) or nil
                         if n.type == 'function'
                         and fretNode
-                        and vm.getInfer(fretNode):view(uri) == 'unknown'
+                        and (fretView == 'unknown' or fretView == 'nil')
                         and n.returns then
                             local directReturnNodes = {}
                             local hasConcreteDirectReturn = false
@@ -605,17 +649,17 @@ function mt:resolve(uri, args)
                                     return views
                                 end)(), ', ')))
                                 hasConcreteReturn = true
-                                goto CONTINUE
+                                usedDirectReturn = true
                             end
                         end
-                        if fretNode then
+                        if not usedDirectReturn and fretNode then
                             returnNodes[#returnNodes+1] = fretNode
                             if vm.getInfer(fretNode):view(uri) ~= 'unknown' then
                                 hasConcreteReturn = true
                             end
                         end
+                        restoreSpecializedArgs()
                     end
-                    ::CONTINUE::
                 end
                 for _, fretNode in ipairs(returnNodes) do
                     if not (hasConcreteReturn and vm.getInfer(fretNode):view(uri) == 'unknown') then

@@ -97,6 +97,99 @@ end
 local <?list?> = list_of(1, 1.1, 3)
 ]]
 
+
+TEST '{ age: number }' [[
+---@class list<T>
+local list = {}
+
+---@class fork_result<A, B>
+local fork_result = {}
+
+---@class dict<K, V>
+local dict = {}
+
+---@class enumerable<T>
+local enumerable = {}
+
+local linq = {}
+
+---@generic T
+---@overload fun(enumerable: enumerable<T>): list<T>
+function linq.list(...)
+end
+
+---@generic A, B
+---@param self fork_result<A, B>
+---@return A, B
+function fork_result:spread()
+end
+
+---@generic K, V
+---@overload fun(table: { [K]: V }): dict<K, V>
+function linq.dict(...)
+end
+
+---@generic K, V
+---@param self dict<K, V>
+---@return enumerable<K, V>
+function dict:enumerate()
+end
+
+---@generic T, K, V
+---@overload fun(self: enumerable<T>, predicate: fun(item: T): boolean): enumerable<T>
+---@overload fun(self: enumerable<K, V>, predicate: fun(key: K, value: V): boolean): enumerable<K, V>
+function enumerable:where(...)
+end
+
+---@generic TI, TO, KI, KO, VI, VO
+---@overload fun(self: enumerable<TI>, selector: fun(item: TI): TO): enumerable<TO>
+---@overload fun(self: enumerable<KI, VI>, selector: fun(key: KI, value: VI): TO): enumerable<TO>
+---@overload fun(self: enumerable<KI, VI>, selector: fun(key: KI, value: VI): KO, VO): enumerable<KO, VO>
+function enumerable:select(...)
+end
+
+---@generic TI, TO, KI, VI
+---@overload fun(self: enumerable<TI>, consumer: fun(enum: enumerable<TI>): TO): TO
+---@overload fun(self: enumerable<KI, VI>, consumer: fun(enum: enumerable<KI, VI>): TO): TO
+function enumerable:collect(...)
+end
+
+---@generic T, K, V, R1, R2
+---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2)): fork_result<R1, R2>
+---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2)): fork_result<R1, R2>
+function enumerable:fork(...)
+end
+
+---@return table<string, { age: number }>
+local function make_table()
+    return {
+        ['max'] = { age = 30 },
+        ['tom'] = { age = 25 },
+        ['isa'] = { age = 28 },
+        ['lisa'] = { age = 22 },
+    }
+end
+
+local t = make_table()
+
+local dict = linq.dict(t)
+local names, ages = dict
+    :enumerate()
+    :where(function (k, v)
+        return k == 'max' or k == 'tom'
+    end)
+    :fork(function (e)
+        local tmp = e:select(function (k, <?v?>)
+            return k
+        end)
+        return tmp:collect(linq.list)
+    end, function (e)
+        local tmp = e:select(function (k, v)
+            return v.age
+        end)
+        return tmp:collect(linq.list)
+    end):spread()
+]]
 TEST 'list<number>' [[
 ---@class list<T>
 
@@ -107,6 +200,99 @@ function list_of(...)
 end
 
 local <?list?> = list_of(1.1, 2.2, 3.3)
+]]
+
+TEST 'enumerable<number>' [[
+---@class list<T>
+local list = {}
+
+---@class fork_result<A, B>
+local fork_result = {}
+
+---@class dict<K, V>
+local dict = {}
+
+---@class enumerable<T>
+local enumerable = {}
+
+local linq = {}
+
+---@generic T
+---@overload fun(enumerable: enumerable<T>): list<T>
+function linq.list(...)
+end
+
+---@generic A, B
+---@param self fork_result<A, B>
+---@return A, B
+function fork_result:spread()
+end
+
+---@generic K, V
+---@overload fun(table: { [K]: V }): dict<K, V>
+function linq.dict(...)
+end
+
+---@generic K, V
+---@param self dict<K, V>
+---@return enumerable<K, V>
+function dict:enumerate()
+end
+
+---@generic T, K, V
+---@overload fun(self: enumerable<T>, predicate: fun(item: T): boolean): enumerable<T>
+---@overload fun(self: enumerable<K, V>, predicate: fun(key: K, value: V): boolean): enumerable<K, V>
+function enumerable:where(...)
+end
+
+---@generic TI, TO, KI, KO, VI, VO
+---@overload fun(self: enumerable<TI>, selector: fun(item: TI): TO): enumerable<TO>
+---@overload fun(self: enumerable<KI, VI>, selector: fun(key: KI, value: VI): TO): enumerable<TO>
+---@overload fun(self: enumerable<KI, VI>, selector: fun(key: KI, value: VI): KO, VO): enumerable<KO, VO>
+function enumerable:select(...)
+end
+
+---@generic TI, TO, KI, VI
+---@overload fun(self: enumerable<TI>, consumer: fun(enum: enumerable<TI>): TO): TO
+---@overload fun(self: enumerable<KI, VI>, consumer: fun(enum: enumerable<KI, VI>): TO): TO
+function enumerable:collect(...)
+end
+
+---@generic T, K, V, R1, R2
+---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2)): fork_result<R1, R2>
+---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2)): fork_result<R1, R2>
+function enumerable:fork(...)
+end
+
+---@return table<string, { age: number }>
+local function make_table()
+    return {
+        ['max'] = { age = 30 },
+        ['tom'] = { age = 25 },
+        ['isa'] = { age = 28 },
+        ['lisa'] = { age = 22 },
+    }
+end
+
+local t = make_table()
+
+local dict = linq.dict(t)
+local names, ages = dict
+    :enumerate()
+    :where(function (k, v)
+        return k == 'max' or k == 'tom'
+    end)
+    :fork(function (e)
+        local tmp = e:select(function (k, v)
+            return k
+        end)
+        return tmp:collect(linq.list)
+    end, function (e)
+        local <?tmp?> = e:select(function (k, v)
+            return v.age
+        end)
+        return tmp:collect(linq.list)
+    end):spread()
 ]]
 
 TEST 'list<integer>' [[
@@ -174,6 +360,31 @@ TEST 'list<any>' [[
 ---@class enumerable<T>
 
 local linq = {}
+
+---@generic T
+---@param source enumerable<T>
+---@return list<T>
+local function to_list(source)
+end
+
+---@generic K, V
+---@param source enumerable<K, V>
+---@return list<K>
+local function keys(source)
+end
+
+---@generic K, V, R
+---@param source enumerable<K, V>
+---@param selector fun(value: V): R
+---@return list<R>
+local function map_values(source, selector)
+end
+
+---@generic T
+---@param self enumerable<T>
+---@return list<T>
+function enumerable:to_list()
+end
 
 ---@generic T
 ---@overload fun(): list<any>
@@ -295,6 +506,108 @@ end
 local source = {}
 
 local <?result?> = make_list(source)
+]]
+
+TEST 'string' [[
+---@class list<T>
+local list = {}
+
+---@class fork_result<A, B>
+local fork_result = {}
+
+---@class dict<K, V>
+local dict = {}
+
+---@class enumerable<T>
+local enumerable = {}
+
+local linq = {}
+
+---@generic T
+---@param self list<T>
+---@return T
+function list:first()
+end
+
+---@generic T
+---@param self list<T>
+---@return fun(): T
+function list:iter()
+end
+
+---@generic A, B
+---@param self fork_result<A, B>
+---@return A, B
+function fork_result:spread()
+end
+
+---@generic K, V
+---@overload fun(table: { [K]: V }): dict<K, V>
+function linq.dict(...)
+end
+
+---@generic T
+---@overload fun(enumerable: enumerable<T>): list<T>
+function linq.list(...)
+end
+
+---@generic K, V
+---@param self dict<K, V>
+---@return enumerable<K, V>
+function dict:enumerate()
+end
+
+---@generic T, K, V
+---@overload fun(self: enumerable<T>, predicate: fun(item: T): boolean): enumerable<T>
+---@overload fun(self: enumerable<K, V>, predicate: fun(key: K, value: V): boolean): enumerable<K, V>
+function enumerable:where(...)
+end
+
+---@generic TI, TO, KI, KO, VI, VO
+---@overload fun(self: enumerable<TI>, selector: fun(item: TI): TO): enumerable<TO>
+---@overload fun(self: enumerable<KI, VI>, selector: fun(key: KI, value: VI): TO): enumerable<TO>
+---@overload fun(self: enumerable<KI, VI>, selector: fun(key: KI, value: VI): KO, VO): enumerable<KO, VO>
+function enumerable:select(...)
+end
+
+---@generic TI, TO, KI, VI
+---@overload fun(self: enumerable<TI>, consumer: fun(enum: enumerable<TI>): TO): TO
+---@overload fun(self: enumerable<KI, VI>, consumer: fun(enum: enumerable<KI, VI>): TO): TO
+function enumerable:collect(...)
+end
+
+---@generic T, K, V, R1, R2
+---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2)): fork_result<R1, R2>
+---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2)): fork_result<R1, R2>
+function enumerable:fork(...)
+end
+
+---@return table<string, { age: number }>
+local function make_table()
+    return {
+        ['max'] = { age = 30 },
+        ['tom'] = { age = 25 },
+        ['isa'] = { age = 28 },
+        ['lisa'] = { age = 22 },
+    }
+end
+
+local t = make_table()
+
+local names = linq.dict(t)
+    :enumerate()
+    :where(function (k, v)
+        return k == 'max' or k == 'tom'
+    end)
+    :fork(function (e)
+        return to_list(e:select(function (<?k?>, v)
+            return k
+        end))
+    end, function (e)
+        return to_list(e:select(function (k, v)
+            return v.age
+        end))
+    end):spread()
 ]]
 
 TEST 'integer' [[

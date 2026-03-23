@@ -130,8 +130,102 @@ local function isEventNotMatch(call, src)
 end
 
 ---@param call parser.object
+---@return integer
+local function getCallExplicitArgStart(call)
+    if call.node.type == 'getmethod'
+    and call.args
+    and call.args[1]
+    and call.args[1].type == 'self' then
+        return 2
+    end
+    return 1
+end
+
+---@param call parser.object
+---@param func parser.object
+---@return integer
+local function getSignatureMethodArgOffset(call, func)
+    if call.node.type ~= 'getmethod' then
+        return 0
+    end
+    local firstArg = func.args and func.args[1]
+    if not firstArg then
+        return 0
+    end
+    if firstArg.type == 'self'
+    or (firstArg.name and firstArg.name[1] == 'self') then
+        return 1
+    end
+    return 0
+end
+
+---@param call parser.object
+---@param index integer?
+---@param funcs parser.object[]?
+---@return parser.object[]?
+local function filterSignatureCandidates(call, index, funcs)
+    if not funcs or not index or not call.args or #funcs == 0 then
+        return funcs
+    end
+    local explicitArgStart = getCallExplicitArgStart(call)
+    local completedExplicitArgs = #call.args - explicitArgStart + 1
+    if completedExplicitArgs <= 0 then
+        return funcs
+    end
+    local uri = guide.getUri(call)
+    local filtered = {}
+    for _, func in ipairs(funcs) do
+        local argOffset = getSignatureMethodArgOffset(call, func)
+        local _, max = vm.countParamsOfFunction(func)
+        local explicitMax = max == math.huge and math.huge or math.max(0, max - argOffset)
+        if explicitMax >= index then
+            local matched = true
+            for argIndex = explicitArgStart, #call.args do
+                local explicitIndex = argIndex - explicitArgStart + 1
+                local param = func.args and func.args[explicitIndex + argOffset]
+                if not param or not vm.canCastType(uri, vm.compileNode(param), vm.compileNode(call.args[argIndex])) then
+                    matched = false
+                    break
+                end
+            end
+            if matched then
+                filtered[#filtered+1] = func
+            end
+        end
+    end
+    if #filtered > 0 then
+        return filtered
+    end
+    return funcs
+end
+
+---@param call parser.object
+---@return parser.object[]
+local function collectSignatureFuncs(call)
+    local funcs = {}
+    local node = vm.compileNode(call.node)
+    node = node.originNode or node
+    for src in node:eachObject() do
+        if src.type == 'function'
+        or src.type == 'doc.type.function' then
+            funcs[#funcs+1] = src
+        elseif src.type == 'global' and src.cate == 'type' then
+            ---@cast src vm.global
+            for _, set in ipairs(src:getSets(guide.getUri(call))) do
+                if set.type == 'doc.class' then
+                    for _, overload in ipairs(set.calls) do
+                        funcs[#funcs+1] = overload.overload
+                    end
+                end
+            end
+        end
+    end
+    return funcs
+end
+
+---@param call parser.object
 ---@return vm.node
-local function getMatchedSignatureNode(call)
+local function getMatchedSignatureNode(call, index)
     local explicitArgCount = 0
     if call.args then
         for _, arg in ipairs(call.args) do
@@ -141,8 +235,18 @@ local function getMatchedSignatureNode(call)
         end
     end
     if explicitArgCount <= 1 then
-        local node = vm.compileNode(call.node)
-        return node.originNode or node
+        if explicitArgCount == 1 then
+            local funcs = filterSignatureCandidates(call, index, collectSignatureFuncs(call))
+            if funcs and #funcs > 0 then
+                local node = vm.createNode()
+                for _, func in ipairs(funcs) do
+                    node:merge(func)
+                end
+                return node
+            end
+        end
+        local fallbackNode = vm.compileNode(call.node)
+        return fallbackNode.originNode or fallbackNode
     end
     local funcs = vm.getExactMatchedFunctions(call.node, call.args)
     if not funcs or #funcs == 0 then
@@ -199,7 +303,7 @@ local function makeSignatures(text, call, pos)
         end
     end
     local signs = {}
-    local node = getMatchedSignatureNode(call)
+    local node = getMatchedSignatureNode(call, index)
     local mark = {}
     for src in node:eachObject() do
         if (src.type == 'function' and not vm.isVarargFunctionWithOverloads(src))
