@@ -212,6 +212,280 @@ function mt:resolve(uri, args)
         return specializedArgs
     end
 
+    ---@param expectedArgs parser.object[]?
+    ---@return parser.object[]?
+    local function buildExpectedCallbackCallArgs(expectedArgs)
+        if not expectedArgs then
+            return nil
+        end
+        local args = {}
+        for index, expectedArg in ipairs(expectedArgs) do
+            local replacement = expectedArg
+            if expectedArg.extends then
+                ---@diagnostic disable-next-line: missing-fields
+                replacement = {
+                    type = 'dummyarg',
+                    parent = expectedArg.parent,
+                    start = expectedArg.start,
+                    finish = expectedArg.finish,
+                }
+                vm.setNode(replacement, vm.compileNode(expectedArg.extends), true)
+            end
+            args[index] = replacement
+        end
+        return args
+    end
+
+    ---@param view string?
+    ---@return string?, integer?
+    local function getStructuredTypeInfo(view)
+        if not view then
+            return nil, nil
+        end
+        local baseName, signText = view:match('^([%w_%.]+)%s*<(.+)>$')
+        if not baseName then
+            local plainName = view:match('^([%w_%.]+)$')
+            if plainName then
+                return plainName, 0
+            end
+            return nil, nil
+        end
+        local depth = 0
+        local arity = 1
+        for i = 1, #signText do
+            local ch = signText:sub(i, i)
+            if ch == '<' or ch == '(' or ch == '{' or ch == '[' then
+                depth = depth + 1
+            elseif ch == '>' or ch == ')' or ch == '}' or ch == ']' then
+                depth = depth - 1
+            elseif ch == ',' and depth == 0 then
+                arity = arity + 1
+            end
+        end
+        return baseName, arity
+    end
+
+    ---@param callback parser.object
+    ---@param callArgs parser.object[]
+    ---@return integer
+    local function getCallableCallbackScore(callback, callArgs)
+        if callback.type ~= 'doc.type.function' or not callback.args then
+            return -1
+        end
+        local min, max = vm.countParamsOfFunction(callback)
+        local amin, amax = vm.countList(callArgs)
+        if amin < min or amax > max then
+            return -1
+        end
+        local score = 0
+        if max ~= math.huge then
+            score = score + 6
+        end
+        for index, callArg in ipairs(callArgs) do
+            local param = callback.args[index]
+            if not param then
+                return -1
+            end
+            local paramObj = param.extends or param
+            local argNode = vm.compileNode(callArg)
+            local paramNode = vm.compileNode(paramObj)
+            local argView = vm.getInfer(argNode):view(uri)
+            local paramView = vm.getInfer(paramNode):view(uri)
+            local argName, argArity = getStructuredTypeInfo(argView)
+            local paramName, paramArity = getStructuredTypeInfo(paramView)
+            local sameStructuredFamily = argName and paramName and argName == paramName
+            local isStructuredArityFallback = sameStructuredFamily
+                and argArity
+                and paramArity
+                and argArity >= paramArity
+                and paramArity > 0
+            if not vm.canCastType(uri, paramNode, argNode)
+            and not isStructuredArityFallback then
+                return -1
+            end
+            if param.name and param.name[1] == '...' then
+                score = score - 6
+            else
+                score = score + 4
+            end
+            if argView and paramView then
+                if argView == paramView then
+                    score = score + 18
+                elseif paramView == 'any' then
+                    score = score + 1
+                else
+                    if sameStructuredFamily then
+                        if argArity == paramArity then
+                            score = score + 10
+                        else
+                            score = score + 3
+                        end
+                    end
+                end
+            end
+        end
+        debugCollectTrace(uri, 'sign.resolve.callback.score', ('callback=%s score=%d'):format(debugCollectView(uri, callback), score))
+        return score
+    end
+
+    ---@param node vm.node
+    ---@param expectedArgs parser.object[]?
+    ---@return table<parser.object, true>?
+    local function getMatchedCallableCallbackDocs(node, expectedArgs)
+        for callback in node:eachObject() do
+            if callback.type == 'function' and callback.parent and callback.parent.type == 'callargs' then
+                return nil
+            end
+        end
+        local callArgs = buildExpectedCallbackCallArgs(expectedArgs)
+        if not callArgs then
+            return nil
+        end
+        local bestScore = -1
+        local matched = nil
+        for callback in node:eachObject() do
+            if callback.type == 'doc.type.function' then
+                ---@cast callback parser.object
+                local score = getCallableCallbackScore(callback, callArgs)
+                if score > bestScore then
+                    bestScore = score
+                    matched = { [callback] = true }
+                elseif score >= 0 and score == bestScore then
+                    matched = matched or {}
+                    matched[callback] = true
+                end
+            end
+        end
+        if matched then
+            local labels = {}
+            for callback in pairs(matched) do
+                labels[#labels+1] = debugCollectView(uri, callback)
+            end
+            table.sort(labels)
+            debugCollectTrace(uri, 'sign.resolve.callback.match', table.concat(labels, ' | '))
+        end
+        return matched
+    end
+
+    ---@param callback parser.object
+    ---@param returnIndex integer
+    ---@param expectedArgs parser.object[]?
+    ---@return vm.node?
+    local function resolveCallableCallbackReturn(callback, returnIndex, expectedArgs)
+        if callback.type ~= 'doc.type.function' then
+            return nil
+        end
+        local callArgs = buildExpectedCallbackCallArgs(expectedArgs)
+        if not callArgs then
+            return nil
+        end
+        local ret = callback.returns[returnIndex]
+        if not ret then
+            local lastReturn = callback.returns[#callback.returns]
+            if lastReturn and lastReturn.name and lastReturn.name[1] == '...' then
+                ret = lastReturn
+            else
+                return nil
+            end
+        end
+        ---@type table<string, vm.node>
+        local callbackResolved = {}
+
+        ---@param actual parser.object?
+        local function getActualGenericNode(actual)
+            if not actual then
+                return nil
+            end
+            if actual.type == 'doc.type.arg' and actual.extends then
+                return getActualGenericNode(actual.extends)
+            end
+            if actual.type == 'doc.type' and actual.types and #actual.types == 1 then
+                return getActualGenericNode(actual.types[1])
+            end
+            return vm.compileNode(actual)
+        end
+
+        ---@param object parser.object?
+        ---@param actual parser.object?
+        local function resolveCallbackGeneric(object, actual)
+            if not object or not actual then
+                return
+            end
+            if object.type == 'doc.type.arg' and object.extends then
+                resolveCallbackGeneric(object.extends, actual)
+                return
+            end
+            if object.type == 'doc.type' and object.types and #object.types == 1 then
+                resolveCallbackGeneric(object.types[1], actual)
+                return
+            end
+            if actual.type == 'doc.type.arg' and actual.extends then
+                resolveCallbackGeneric(object, actual.extends)
+                return
+            end
+            if actual.type == 'doc.type' and actual.types and #actual.types == 1 then
+                resolveCallbackGeneric(object, actual.types[1])
+                return
+            end
+            if object.type == 'doc.generic.name' then
+                local key = object[1]
+                local actualNode = getActualGenericNode(actual)
+                if actualNode then
+                    callbackResolved[key] = actualNode
+                end
+                return
+            end
+            if object.type == 'doc.type.sign' and object.node and object.node[1] and object.signs then
+                if actual.type == 'doc.type.sign'
+                and actual.node
+                and actual.node[1] == object.node[1]
+                and actual.signs then
+                    for index, sign in ipairs(object.signs) do
+                        local actualSign = actual.signs[index]
+                        if actualSign then
+                            resolveCallbackGeneric(sign, actualSign)
+                        end
+                    end
+                end
+                return
+            end
+            if object.type == 'doc.type.array' and object.node then
+                if actual.type == 'doc.type.array' and actual.node then
+                    resolveCallbackGeneric(object.node, actual.node)
+                end
+            end
+        end
+
+        for index, param in ipairs(callback.args or {}) do
+            local callArg = expectedArgs and expectedArgs[index] or nil
+            if param and callArg then
+                resolveCallbackGeneric(param, callArg)
+            end
+        end
+        if next(callbackResolved) then
+            local parts = {}
+            for key, value in pairs(callbackResolved) do
+                parts[#parts+1] = ('%s=%s'):format(key, debugCollectView(uri, value))
+            end
+            table.sort(parts)
+            debugCollectTrace(uri, 'sign.resolve.callback.mapped-return', ('callback=%s resolved={%s}'):format(debugCollectView(uri, callback), table.concat(parts, ', ')))
+            local resolvedRet = vm.cloneObject(ret, callbackResolved) or ret
+            return vm.compileNode(resolvedRet)
+        end
+        local sign = vm.getSign(callback)
+        if not sign then
+            debugCollectTrace(uri, 'sign.resolve.callback.unresolved-return', ('callback=%s no-sign'):format(debugCollectView(uri, callback)))
+            return vm.compileNode(ret)
+        end
+        local resolved = sign:resolve(uri, callArgs)
+        if resolved and next(resolved) then
+            local resolvedRet = vm.cloneObject(ret, resolved) or ret
+            return vm.compileNode(resolvedRet)
+        end
+        debugCollectTrace(uri, 'sign.resolve.callback.unresolved-return', ('callback=%s sign-empty'):format(debugCollectView(uri, callback)))
+        return vm.compileNode(ret)
+    end
+
     ---@param call parser.object
     ---@param returnIndex integer
     ---@param actualArgs? parser.object[]
@@ -430,16 +704,39 @@ function mt:resolve(uri, args)
             if not object.node or not object.node[1] or not object.signs then
                 return
             end
+            local matchedStructuredSign = false
+            local fallbackStructuredSign
+            local fallbackStructuredCount = 0
             for n in node:eachObject() do
                 if n.type == 'doc.type.sign'
                 and n.node
-                and n.node[1] == object.node[1]
                 and n.signs then
-                    for i, sign in ipairs(object.signs) do
-                        local resolvedSign = n.signs[i]
-                        if resolvedSign then
-                            resolve(sign, vm.compileNode(resolvedSign))
+                    if n.node[1] == object.node[1] then
+                        matchedStructuredSign = true
+                        for i, sign in ipairs(object.signs) do
+                            local resolvedSign = n.signs[i]
+                            if resolvedSign then
+                                resolve(sign, vm.compileNode(resolvedSign))
+                            end
                         end
+                    elseif #n.signs == #object.signs then
+                        fallbackStructuredCount = fallbackStructuredCount + 1
+                        fallbackStructuredSign = n
+                    end
+                end
+            end
+            if not matchedStructuredSign
+            and fallbackStructuredCount == 1
+            and fallbackStructuredSign
+            and fallbackStructuredSign.signs then
+                debugCollectTrace(uri, 'sign.resolve.sign-fallback', ('expected=%s actual=%s'):format(
+                    debugCollectView(uri, object),
+                    debugCollectView(uri, fallbackStructuredSign)
+                ))
+                for i, sign in ipairs(object.signs) do
+                    local resolvedSign = fallbackStructuredSign.signs[i]
+                    if resolvedSign then
+                        resolve(sign, vm.compileNode(resolvedSign))
                     end
                 end
             end
@@ -486,9 +783,13 @@ function mt:resolve(uri, args)
         if object.type == 'doc.type.function' then
             local currentObject = vm.cloneObject(object, resolved) or object
             local resolvedCallbackArgs = currentObject.args
-            for callbackObject in node:eachObject() do
-                if callbackObject.type == 'doc.type.function' and callbackObject.args then
-                    resolvedCallbackArgs = callbackObject.args
+            local matchedCallableCallbacks = getMatchedCallableCallbackDocs(node, resolvedCallbackArgs)
+            local hasInlineCallback = false
+            for n in node:eachObject() do
+                if n.type == 'function'
+                and n.parent
+                and n.parent.type == 'callargs' then
+                    hasInlineCallback = true
                     break
                 end
             end
@@ -496,8 +797,8 @@ function mt:resolve(uri, args)
             for i, arg in ipairs(currentObject.args) do
                 if arg.extends then
                     for n in node:eachObject() do
-                        if n.type == 'function'
-                        or n.type == 'doc.type.function' then
+                        if (not hasInlineCallback or n.type == 'function')
+                        and (n.type == 'function' or n.type == 'doc.type.function') then
                             ---@cast n parser.object
                             local farg = n.args and n.args[i]
                             if farg then
@@ -511,9 +812,15 @@ function mt:resolve(uri, args)
                 local returnNodes = {}
                 local hasConcreteReturn = false
                 for n in node:eachObject() do
+                    if hasInlineCallback and n.type ~= 'function' then
+                        goto CONTINUE
+                    end
                     if n.type == 'function'
                     or n.type == 'doc.type.function' then
                         ---@cast n parser.object
+                        if matchedCallableCallbacks and not matchedCallableCallbacks[n] then
+                            goto CONTINUE
+                        end
                         local specializedArgNodes = {}
                         local specializedArgCache = {}
                         local specializedArgs = false
@@ -566,8 +873,13 @@ function mt:resolve(uri, args)
                         local fret = vm.getReturnOfFunction(n, i)
                         local fretNode
                         local usedDirectReturn = false
+                        local canResolveCallableCallback = resolvedCallbackArgs
+                            and n.type == 'doc.type.function'
+                        if canResolveCallableCallback then
+                            fretNode = resolveCallableCallbackReturn(n, i, resolvedCallbackArgs)
+                        end
                         if fret then
-                            fretNode = vm.compileNode(fret)
+                            fretNode = fretNode or vm.compileNode(fret)
                         end
                         if n.type == 'function'
                         and fretNode
@@ -660,6 +972,7 @@ function mt:resolve(uri, args)
                         end
                         restoreSpecializedArgs()
                     end
+                    ::CONTINUE::
                 end
                 for _, fretNode in ipairs(returnNodes) do
                     if not (hasConcreteReturn and vm.getInfer(fretNode):view(uri) == 'unknown') then

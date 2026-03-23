@@ -356,6 +356,7 @@ end
 
 local getReceiverGenericMap
 local mergeResolvedGenerics
+local getCallableVariableCallbackScore
 
 ---@param callFunc parser.object?
 ---@param args parser.object[]?
@@ -429,7 +430,13 @@ local function isAllParamMatched(uri, callFunc, args, params, func)
             defObj = vm.cloneObject(defObj, resolved) or defObj
         end
         local defNode = vm.compileNode(defObj)
-        if not vm.canCastType(uri, defNode, argNode) then
+        local callbackScore = 0
+        if defObj.type ~= 'generic' then
+            ---@cast defObj parser.object
+            callbackScore = getCallableVariableCallbackScore(uri, args[i], defObj)
+        end
+        if not vm.canCastType(uri, defNode, argNode)
+        and callbackScore <= 0 then
             return false
         end
     end
@@ -926,6 +933,105 @@ local function getFunctionParamProto(param)
     return nil
 end
 
+---@param uri uri
+---@param actual parser.object?
+---@param expected parser.object?
+---@return integer
+getCallableVariableCallbackScore = function (uri, actual, expected)
+    if not actual or actual.type == 'function' then
+        return 0
+    end
+    local expectedFunc = getFunctionParamProto(expected)
+    if not expectedFunc then
+        return 0
+    end
+
+    local bestScore = -1
+    local actualNode = vm.compileNode(actual)
+    for callback in actualNode:eachObject() do
+        if callback.type == 'function' or callback.type == 'doc.type.function' then
+            ---@cast callback parser.object
+            local actualMin, actualMax, actualDef = vm.countParamsOfFunction(callback)
+            local expectedMin, expectedMax, expectedDef = vm.countParamsOfFunction(expectedFunc)
+            local actualRetMin, actualRetMax, actualRetDef = vm.countReturnsOfFunction(callback)
+            local expectedRetMin, expectedRetMax, expectedRetDef = vm.countReturnsOfFunction(expectedFunc)
+
+            if actualMin > expectedMax or actualMax < expectedMin then
+                goto CONTINUE
+            end
+
+            local score = 0
+            if expectedMax ~= math.huge then
+                if actualMax == expectedMax and actualDef == expectedDef then
+                    score = score + 18
+                elseif actualMax >= expectedMax then
+                    score = score + 6
+                end
+            end
+
+            if expectedRetMax ~= math.huge then
+                if actualRetMax < expectedRetMin then
+                    goto CONTINUE
+                end
+                if actualRetMax == expectedRetMax and actualRetDef == expectedRetDef then
+                    score = score + 14
+                elseif actualRetDef >= expectedRetDef then
+                    score = score + 4
+                end
+            end
+
+            local compatible = true
+            for index, expectedArg in ipairs(expectedFunc.args or {}) do
+                local callbackArg = callback.args and callback.args[index]
+                if not callbackArg then
+                    compatible = false
+                    break
+                end
+                local callbackArgNode = vm.compileNode(callbackArg.extends or callbackArg)
+                local expectedArgNode = vm.compileNode(expectedArg.extends or expectedArg)
+                if not vm.canCastType(uri, callbackArgNode, expectedArgNode) then
+                    local callbackView = vm.getInfer(callbackArgNode):view(uri)
+                    local expectedView = vm.getInfer(expectedArgNode):view(uri)
+                    local callbackName, callbackArity = getStructuredTypeInfo(callbackView)
+                    local expectedName, expectedArity = getStructuredTypeInfo(expectedView)
+                    if not (callbackName and expectedName and callbackName == expectedName and callbackArity and expectedArity and expectedArity >= callbackArity and callbackArity > 0) then
+                        compatible = false
+                        break
+                    end
+                end
+
+                local callbackView = vm.getInfer(callbackArgNode):view(uri)
+                local expectedView = vm.getInfer(expectedArgNode):view(uri)
+                if callbackView and expectedView then
+                    if callbackView == expectedView then
+                        score = score + 12
+                    else
+                        local callbackName, callbackArity = getStructuredTypeInfo(callbackView)
+                        local expectedName, expectedArity = getStructuredTypeInfo(expectedView)
+                        if callbackName and expectedName and callbackName == expectedName then
+                            if callbackArity == expectedArity then
+                                score = score + 8
+                            else
+                                score = score + 3
+                            end
+                        end
+                    end
+                end
+            end
+
+            if compatible and score > bestScore then
+                bestScore = score
+            end
+            ::CONTINUE::
+        end
+    end
+
+    if bestScore < 0 then
+        return 0
+    end
+    return bestScore
+end
+
 ---@param actual parser.object?
 ---@param expected parser.object?
 ---@return integer
@@ -1027,6 +1133,7 @@ local function calcFunctionMatchScore(uri, callFunc, args, func)
         end
         matchScore = matchScore + getParamSpecificityScore(uri, arg, param)
         matchScore = matchScore + getCallbackSpecificityScore(arg, param)
+        matchScore = matchScore + getCallableVariableCallbackScore(uri, arg, param)
         local _, literalsCount = vm.getLiterals(param)
         if hasExactLiteralMatch(arg, param) then
             matchScore = matchScore + math.max(1, 12 / math.max(literalsCount, 1))
@@ -1092,6 +1199,32 @@ local function filterExplicitTableOverloads(uri, args, callFunc, funcs)
     return filtered
 end
 
+---@param uri uri
+---@param args parser.object[]
+---@param callFunc parser.object?
+---@param funcs parser.object[]
+---@return parser.object[]
+local function filterMethodSelfOverloads(uri, args, callFunc, funcs)
+    if not callFunc or callFunc.type ~= 'getmethod' then
+        return funcs
+    end
+    local bestScore
+    local filtered = {}
+    for _, func in ipairs(funcs) do
+        local score = getMethodSelfSpecificityScore(uri, callFunc, args, func)
+        if not bestScore or score > bestScore then
+            bestScore = score
+            filtered = { func }
+        elseif score == bestScore then
+            filtered[#filtered + 1] = func
+        end
+    end
+    if bestScore and #filtered > 0 and #filtered < #funcs then
+        return filtered
+    end
+    return funcs
+end
+
 ---@param args parser.object[]
 ---@param callFunc parser.object?
 ---@param funcs parser.object[]
@@ -1102,25 +1235,44 @@ local function filterExactArityOverloads(args, callFunc, funcs)
         return funcs
     end
     local exact = {}
+    local variadic = {}
     for _, func in ipairs(funcs) do
         local argOffset = getMethodArgOffset(callFunc, args, func)
         local _, max, def = vm.countParamsOfFunction(func)
+        local lastParam = func.args and func.args[#func.args] or nil
         if max ~= math.huge then
             max = max - argOffset
         end
         def = def - argOffset
         if max == amax and def == amax then
             exact[#exact + 1] = func
+        elseif isVariadicParam(lastParam) then
+            variadic[#variadic + 1] = func
         end
     end
-    if #exact == 1 then
-        for _, func in ipairs(exact) do
-            if hasExplicitReturns(func) then
-                return exact
+    if #exact > 0 then
+        for _, func in ipairs(variadic) do
+            exact[#exact + 1] = func
+        end
+        return exact
+    end
+    return funcs
+end
+
+---@param args parser.object[]
+---@return boolean
+local function hasCallableVariableArg(args)
+    for _, arg in ipairs(args) do
+        if arg and arg.type ~= 'function' then
+            local node = vm.compileNode(arg)
+            for obj in node:eachObject() do
+                if obj.type == 'function' or obj.type == 'doc.type.function' then
+                    return true
+                end
             end
         end
     end
-    return funcs
+    return false
 end
 
 ---@param func parser.object
@@ -1140,6 +1292,10 @@ function vm.getExactMatchedFunctions(func, args)
     if #funcs == 1 then
         return funcs
     end
+    funcs = filterMethodSelfOverloads(uri, args, func, funcs)
+    if #funcs == 1 then
+        return funcs
+    end
     funcs = filterExactArityOverloads(args, func, funcs)
     if #funcs == 1 then
         return funcs
@@ -1151,7 +1307,9 @@ function vm.getExactMatchedFunctions(func, args)
 
     local maxMatchScore = math.max(table.unpack(matchScores))
     if maxMatchScore == -1 then
-        -- all should be removed
+        if hasCallableVariableArg(args) then
+            return funcs
+        end
         return nil
     end
 
