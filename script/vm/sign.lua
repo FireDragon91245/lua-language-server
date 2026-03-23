@@ -265,6 +265,21 @@ function mt:resolve(uri, args)
         return baseName, arity
     end
 
+    ---@param object parser.object
+    ---@return string?
+    local function getSingleGenericReturnKey(object)
+        if object.type == 'doc.generic.name' then
+            return object[1]
+        end
+        if object.type == 'doc.type' and object.types and #object.types == 1 then
+            local inner = object.types[1]
+            if inner.type == 'doc.generic.name' then
+                return inner[1]
+            end
+        end
+        return nil
+    end
+
     ---@param callback parser.object
     ---@param callArgs parser.object[]
     ---@return integer
@@ -577,12 +592,27 @@ function mt:resolve(uri, args)
         for funcNode in callNode:eachObject() do
             if funcNode.type == 'function' or funcNode.type == 'doc.type.function' then
                 ---@cast funcNode parser.object
+                local resolveCallArgs = resolvedArgs
+                if call.node and call.node.type == 'getmethod' then
+                    local receiver = call.node.node
+                    if receiver then
+                        local sign = vm.getSign(funcNode)
+                        if not (sign and resolveCallArgs and #resolveCallArgs == #sign.signList) then
+                            resolveCallArgs = { receiver }
+                            if resolvedArgs then
+                                for index = 1, #resolvedArgs do
+                                    resolveCallArgs[#resolveCallArgs+1] = resolvedArgs[index]
+                                end
+                            end
+                        end
+                    end
+                end
                 local returnObject = vm.getReturnOfFunction(funcNode, returnIndex)
                 if returnObject then
                     debugCollectTrace(uri, 'sign.resolve.call-fallback.return', ('func=%s return=%s'):format(funcNode.type, debugCollectView(uri, returnObject)))
                     for returnNode in vm.compileNode(returnObject):eachObject() do
-                        if returnNode.type == 'generic' and returnNode.sign and resolvedArgs then
-                            local resolvedGeneric = returnNode.sign:resolve(uri, resolvedArgs)
+                        if returnNode.type == 'generic' and returnNode.sign and resolveCallArgs then
+                            local resolvedGeneric = returnNode.sign:resolve(uri, resolveCallArgs)
                             debugCollectTrace(uri, 'sign.resolve.call-fallback.generic', ('resolved=%s'):format(debugCollectView(uri, resolvedGeneric and next(resolvedGeneric) and select(2, next(resolvedGeneric)) or nil)))
                             if resolvedGeneric then
                                 local protoNode = vm.compileNode(returnNode.proto)
@@ -608,6 +638,56 @@ function mt:resolve(uri, args)
         return nil
     end
 
+    ---@param exp parser.object?
+    ---@param returnIndex integer
+    ---@param actualArgs? parser.object[]
+    ---@param expectedArgs? parser.object[]
+    ---@param specializedArgNodes? table<parser.object, vm.node>
+    ---@param seen? table<parser.object, true>
+    ---@return vm.node?
+    local function resolveReturnExpression(exp, returnIndex, actualArgs, expectedArgs, specializedArgNodes, seen)
+        if not exp then
+            return nil
+        end
+        seen = seen or {}
+        if seen[exp] then
+            return nil
+        end
+        seen[exp] = true
+
+        if exp.type == 'call' then
+            return resolveCallExpression(exp, returnIndex, actualArgs, expectedArgs, specializedArgNodes)
+        end
+
+        local resolvedNode = vm.compileNode(exp)
+        local resolvedView = vm.getInfer(resolvedNode):view(uri)
+        if resolvedView and resolvedView ~= 'unknown' and not hasUnresolvedGeneric(resolvedNode) then
+            return resolvedNode
+        end
+
+        local target = exp
+        if exp.type == 'getlocal' then
+            target = guide.getLocal(exp, exp[1], exp.start) or exp
+        end
+
+        if target ~= exp then
+            local targetNode = vm.compileNode(target)
+            local targetView = vm.getInfer(targetNode):view(uri)
+            if targetView and targetView ~= 'unknown' and not hasUnresolvedGeneric(targetNode) then
+                return targetNode
+            end
+        end
+
+        if (target.type == 'local' or target.type == 'setlocal') and target.value then
+            local valueNode = resolveReturnExpression(target.value, returnIndex, actualArgs, expectedArgs, specializedArgNodes, seen)
+            if valueNode and not valueNode:isEmpty() then
+                return valueNode
+            end
+        end
+
+        return resolvedNode
+    end
+
     ---@param object vm.node|vm.node.object
     ---@param node   vm.node
     local function resolve(object, node)
@@ -631,6 +711,63 @@ function mt:resolve(uri, args)
             ---@type string
             local key = object[1]
             debugCollectTrace(uri, 'sign.resolve.generic', ('key=%s node=%s literal=%s'):format(key, debugCollectView(uri, node), tostring(not not object.literal)))
+            local function buildResolvedGenericNode(inputNode)
+                local concreteNode = vm.createNode()
+                local fallbackNode = vm.createNode()
+                local hasConcrete = false
+                for n in inputNode:eachObject() do
+                    if n.type == 'doc.generic.name' or n.type == 'generic' then
+                        goto CONTINUE
+                    end
+                    local fallbackObject = n
+                    if n.type == 'getlocal' then
+                        fallbackObject = guide.getLocal(n, n[1], n.start) or n
+                    end
+                    fallbackNode:merge(fallbackObject)
+                    if n.type == 'local'
+                    or n.type == 'getlocal'
+                    or n.type == 'setlocal'
+                    or n.type == 'variable' then
+                        local expandedSource = n
+                        if n.type == 'getlocal' then
+                            expandedSource = guide.getLocal(n, n[1], n.start) or n
+                        end
+                        local expandedNode = vm.compileNode(expandedSource)
+                        if (expandedSource.type == 'local' or expandedSource.type == 'setlocal')
+                        and expandedSource.value then
+                            local valueNode = resolveReturnExpression(expandedSource.value, 1)
+                            if valueNode and not valueNode:isEmpty() then
+                                expandedNode = valueNode
+                            end
+                        end
+                        for expanded in expandedNode:eachObject() do
+                            if expanded.type ~= 'local'
+                            and expanded.type ~= 'getlocal'
+                            and expanded.type ~= 'setlocal'
+                            and expanded.type ~= 'variable'
+                            and expanded.type ~= 'doc.generic.name'
+                            and expanded.type ~= 'generic' then
+                                concreteNode:merge(expanded)
+                                hasConcrete = true
+                            end
+                        end
+                    else
+                        concreteNode:merge(n)
+                        hasConcrete = true
+                    end
+                    ::CONTINUE::
+                end
+                if hasConcrete then
+                    if inputNode:isOptional() then
+                        concreteNode:addOptional()
+                    end
+                    return concreteNode
+                end
+                if inputNode:isOptional() then
+                    fallbackNode:addOptional()
+                end
+                return fallbackNode
+            end
             if object.literal then
                 -- 'number' -> `T`
                 for n in node:eachObject() do
@@ -657,18 +794,13 @@ function mt:resolve(uri, args)
                 end
             else
                 -- number -> T
-                for n in node:eachObject() do
-                    if  n.type ~= 'doc.generic.name'
-                    and n.type ~= 'generic' then
-                        if resolved[key] then
-                            resolved[key]:merge(n)
-                        else
-                            resolved[key] = vm.createNode(n)
-                        end
+                local resolvedNode = buildResolvedGenericNode(node)
+                if not resolvedNode:isEmpty() then
+                    if resolved[key] then
+                        resolved[key]:merge(resolvedNode)
+                    else
+                        resolved[key] = resolvedNode
                     end
-                end
-                if resolved[key] and node:isOptional() then
-                    resolved[key]:addOptional()
                 end
             end
             return
@@ -887,9 +1019,14 @@ function mt:resolve(uri, args)
                         and n.returns then
                             for _, returnList in ipairs(n.returns) do
                                 local directReturnNode, selectedExp = vm.selectNode(returnList, i)
-                                if selectedExp and selectedExp.type == 'call' then
-                                    directReturnNode = resolveCallExpression(selectedExp, i, n.args, resolvedCallbackArgs, specializedArgNodes) or directReturnNode
-                                    if directReturnNode and not directReturnNode:isEmpty() and not hasUnresolvedGeneric(directReturnNode) then
+                                if selectedExp then
+                                    directReturnNode = resolveReturnExpression(selectedExp, i, n.args, resolvedCallbackArgs, specializedArgNodes) or directReturnNode
+                                    local isLocalReturn = selectedExp.type == 'getlocal'
+                                        or selectedExp.type == 'local'
+                                        or selectedExp.type == 'setlocal'
+                                    if directReturnNode
+                                    and not directReturnNode:isEmpty()
+                                    and (isLocalReturn or not hasUnresolvedGeneric(directReturnNode)) then
                                         fretNode = directReturnNode
                                         break
                                     end
@@ -897,10 +1034,7 @@ function mt:resolve(uri, args)
                             end
                         end
                         debugCollectTrace(uri, 'sign.resolve.callback.return', ('index=%d source=%s fret=%s'):format(i, n.type, debugCollectView(uri, fretNode)))
-                        local fretView = fretNode and vm.getInfer(fretNode):view(uri) or nil
                         if n.type == 'function'
-                        and fretNode
-                        and (fretView == 'unknown' or fretView == 'nil')
                         and n.returns then
                             local directReturnNodes = {}
                             local hasConcreteDirectReturn = false
@@ -928,10 +1062,7 @@ function mt:resolve(uri, args)
                                             rawset(selectedExp.node, '_callReturns', nil)
                                         end
                                     end
-                                    selectedNode = vm.compileNode(selectedExp)
-                                    if vm.getInfer(selectedNode):view(uri) == 'unknown' and selectedExp.type == 'call' then
-                                        selectedNode = resolveCallExpression(selectedExp, i, n.args, resolvedCallbackArgs, specializedArgNodes) or selectedNode
-                                    end
+                                    selectedNode = resolveReturnExpression(selectedExp, i, n.args, resolvedCallbackArgs, specializedArgNodes) or vm.compileNode(selectedExp)
                                 end
                                 debugCollectTrace(uri, 'sign.resolve.callback.direct-selected', ('index=%d exp=%s node=%s'):format(
                                     i,
@@ -977,7 +1108,16 @@ function mt:resolve(uri, args)
                 for _, fretNode in ipairs(returnNodes) do
                     if not (hasConcreteReturn and vm.getInfer(fretNode):view(uri) == 'unknown') then
                         debugCollectTrace(uri, 'sign.resolve.callback.apply-return', ('index=%d return=%s'):format(i, debugCollectView(uri, fretNode)))
-                        resolve(ret, fretNode)
+                        local genericKey = getSingleGenericReturnKey(ret)
+                        if genericKey then
+                            if resolved[genericKey] then
+                                resolved[genericKey]:merge(fretNode)
+                            else
+                                resolved[genericKey] = fretNode
+                            end
+                        else
+                            resolve(ret, fretNode)
+                        end
                     end
                 end
             end
@@ -1151,6 +1291,21 @@ function mt:resolve(uri, args)
             argNode = buildVariadicArgNode(i)
         else
             argNode = vm.compileNode(arg)
+        end
+        if arg.type == 'function' then
+            local hasFunctionSource = false
+            for n in argNode:eachObject() do
+                if n.type == 'function' then
+                    hasFunctionSource = true
+                    break
+                end
+            end
+            if not hasFunctionSource then
+                local mergedArgNode = vm.createNode()
+                mergedArgNode:merge(argNode)
+                mergedArgNode:merge(arg)
+                argNode = mergedArgNode
+            end
         end
         local knownTypes, genericNames = getSignInfo(sign)
         if not isAllResolved(genericNames) then

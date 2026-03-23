@@ -36,9 +36,6 @@ function TEST(wanted)
         local source = getSource(catched['?'][1][1])
         assert(source)
         local result = vm.getInfer(source):view(TESTURI)
-        if wanted ~= result then
-            vm.getInfer(source):view(TESTURI)
-        end
         assert(wanted == result, "Assertion failed! Wanted: " .. tostring(wanted) .. " Got: " .. tostring(result))
         files.remove(TESTURI)
     end
