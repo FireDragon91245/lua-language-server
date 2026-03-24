@@ -99,6 +99,100 @@ local function checkHasDef(checkFunc, source, pushResult)
     return err == HAS_DEF_ERR
 end
 
+---@param classGlobal vm.global?
+---@param uri uri
+---@return boolean
+local function isAliasClass(classGlobal, uri)
+    if not classGlobal then
+        return false
+    end
+    for _, set in ipairs(classGlobal:getSets(uri)) do
+        if set.type == 'doc.alias' then
+            return true
+        end
+    end
+    return false
+end
+
+---@param object vm.node.object
+---@return vm.global?
+---@return string?
+local function getMemberClassInfo(object)
+    local classGlobal
+    local typeName
+    if object.type == 'global' and object.cate == 'type' then
+        ---@cast object vm.global
+        classGlobal = object
+        typeName = object.name
+    elseif object.type == 'doc.type.name' and object[1] then
+        typeName = object[1]
+        classGlobal = vm.getGlobal('type', typeName)
+    elseif object.type == 'doc.type.sign' and object.node and object.node[1] then
+        typeName = object.node[1]
+        classGlobal = vm.getGlobal('type', typeName)
+    elseif object.type == 'string' or object.type == 'doc.type.string' then
+        typeName = 'string'
+        classGlobal = vm.getGlobal('type', typeName)
+    end
+    return classGlobal, typeName
+end
+
+---@param source parser.object
+---@param object vm.node.object
+---@param key string
+---@return boolean?
+local function hasMemberOnObject(source, object, key)
+    local uri = guide.getUri(source)
+    local found = false
+
+    local function markFound(_src)
+        found = true
+    end
+
+    if object.type ~= 'global' and object.type ~= 'generic' then
+        ---@cast object parser.object|vm.variable
+        vm.compileByParentNode(object, key, markFound)
+        if found then
+            return true
+        end
+    end
+
+    local classGlobal, typeName = getMemberClassInfo(object)
+    if classGlobal then
+        if isAliasClass(classGlobal, uri) then
+            return nil
+        end
+        local classSets = classGlobal:getSets(uri)
+        if #classSets == 0 and not typeName then
+            return nil
+        end
+        vm.getClassFields(uri, classGlobal, key, function (_field)
+            found = true
+        end)
+        if found then
+            return true
+        end
+        if #classSets == 0 then
+            return nil
+        end
+    end
+    if typeName then
+        local globalField = vm.getGlobal('variable', typeName, key)
+        if globalField then
+            for _ in ipairs(globalField:getSets(uri)) do
+                return true
+            end
+        end
+    end
+
+    if object.type == 'generic'
+    or object.type == 'doc.generic.name' then
+        return nil
+    end
+
+    return false
+end
+
 ---@param source parser.object
 function vm.hasDef(source)
     local mark = {}
@@ -130,4 +224,83 @@ function vm.hasDef(source)
         or checkHasDef(searchByLocalID, source, pushResult)
         or checkHasDef(vm.compileByNodeChain, source, pushResult)
         or checkHasDef(searchByNode, source, pushResult)
+end
+
+---@param source parser.object
+---@return boolean
+function vm.hasAllDefs(source)
+    if source.type ~= 'getfield' and source.type ~= 'getmethod' then
+        return vm.hasDef(source)
+    end
+
+    local key = guide.getKeyName(source)
+    local receiver = source.node
+    if not key or not receiver then
+        return vm.hasDef(source)
+    end
+
+    local receiverNode = vm.compileNode(receiver)
+    if #receiverNode <= 1 then
+        return vm.hasDef(source)
+    end
+
+    local checked = false
+    local hasUnknown = false
+    for object in receiverNode:eachObject() do
+        checked = true
+        local hasMember = hasMemberOnObject(source, object, key)
+        if hasMember == nil then
+            hasUnknown = true
+        elseif not hasMember then
+            return false
+        end
+    end
+
+    if not checked then
+        return false
+    end
+    if hasUnknown then
+        return true
+    end
+    return true
+end
+
+---@param source parser.object
+---@return string[]?
+function vm.getUndefinedFieldViews(source)
+    if source.type ~= 'getfield' and source.type ~= 'getmethod' then
+        return nil
+    end
+
+    local key = guide.getKeyName(source)
+    local receiver = source.node
+    if not key or not receiver then
+        return nil
+    end
+
+    local uri = guide.getUri(source)
+    local receiverNode = vm.compileNode(receiver)
+    if #receiverNode <= 1 then
+        return nil
+    end
+
+    local missingViews = {}
+    local mark = {}
+    for object in receiverNode:eachObject() do
+        local hasMember = hasMemberOnObject(source, object, key)
+        if hasMember == false then
+            local view = vm.viewObject(object, uri)
+            if view and not mark[view] then
+                mark[view] = true
+                missingViews[#missingViews+1] = view
+            end
+        end
+    end
+
+    if #missingViews == 0 then
+        return nil
+    end
+
+    table.sort(missingViews)
+    return missingViews
 end

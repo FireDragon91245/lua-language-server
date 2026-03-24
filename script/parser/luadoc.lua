@@ -2407,5 +2407,25 @@ return {
         end
         return nil
     end,
+    bindBuiltDoc = function (src, doc)
+        if not doc then
+            return nil
+        end
+        bindDocWithSource(doc, src)
+        return doc
+    end,
+    attachBuiltDoc = function (ast, src, doc)
+        if not doc then
+            return nil
+        end
+        if ast.docs then
+            ast.docs[#ast.docs+1] = doc
+            doc.parent = ast.docs
+        else
+            doc.parent = ast
+        end
+        bindDocWithSource(doc, src)
+        return doc
+    end,
     luadoc = luadoc
 }

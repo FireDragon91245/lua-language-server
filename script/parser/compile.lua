@@ -756,6 +756,47 @@ local function createLocal(obj, attrs)
     return obj
 end
 
+---@param obj parser.object
+local function parseInlineLocalType(obj)
+    if Tokens[Index + 1] ~= ':' then
+        return
+    end
+    Index = Index + 2
+    skipSpace()
+
+    local startOffset = Tokens[Index]
+    local depth = 0
+    local finishOffset
+    while true do
+        local token = Tokens[Index + 1]
+        if not token then
+            break
+        end
+        if depth == 0 and (token == ',' or token == '=' or NLMap[token]) then
+            break
+        end
+        for i = 1, #token do
+            local char = token:sub(i, i)
+            if char == '<' or char == '(' or char == '[' or char == '{' then
+                depth = depth + 1
+            elseif char == '>' or char == ')' or char == ']' or char == '}' then
+                if depth > 0 then
+                    depth = depth - 1
+                end
+            end
+        end
+        finishOffset = Tokens[Index] + #token - 1
+        Index = Index + 2
+    end
+    if not finishOffset then
+        return
+    end
+    local inlineType = Lua:sub(startOffset, finishOffset):match('^%s*(.-)%s*$')
+    if inlineType and inlineType ~= '' then
+        obj.inlineType = inlineType
+    end
+end
+
 local function getLocal(name, pos)
     for i = #Chunk, 1, -1 do
         local chunk  = Chunk[i]
@@ -3054,6 +3095,8 @@ local function parseVarTails(parser, isLocal)
     end
     if isLocal then
         createLocal(second, parseLocalAttrs())
+        skipSpace()
+        parseInlineLocalType(second)
     end
     skipSpace()
     if Tokens[Index + 1] ~= ',' then
@@ -3068,6 +3111,8 @@ local function parseVarTails(parser, isLocal)
     end
     if isLocal then
         createLocal(third, parseLocalAttrs())
+        skipSpace()
+        parseInlineLocalType(third)
     end
     local rest = { third }
     while true do
@@ -3084,6 +3129,8 @@ local function parseVarTails(parser, isLocal)
         end
         if isLocal then
             createLocal(name, parseLocalAttrs())
+            skipSpace()
+            parseInlineLocalType(name)
         end
         rest[#rest+1] = name
     end
@@ -3374,6 +3421,8 @@ local function parseLocal()
         return nil
     end
     local loc = createLocal(name, parseLocalAttrs())
+    skipSpace()
+    parseInlineLocalType(loc)
     loc.locPos = locPos
     loc.effect = maxinteger
     pushActionIntoCurrentChunk(loc)

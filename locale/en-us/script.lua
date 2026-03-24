@@ -8,6 +8,10 @@ DIAG_UNDEF_GLOBAL       =
 'Undefined global `{}`.'
 DIAG_UNDEF_FIELD        =
 'Undefined field `{}`.'
+DIAG_UNDEF_FIELD_FOR_TYPE =
+'Field `{}` is not defined for type `{}`.'
+DIAG_UNDEF_FIELD_FOR_TYPES =
+'Field `{}` is not defined for types `{}`.'
 DIAG_UNDEF_ENV_CHILD    =
 'Undefined variable `{}` (overloaded `_ENV` ).'
 DIAG_UNDEF_FENV_CHILD   =

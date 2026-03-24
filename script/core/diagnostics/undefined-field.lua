@@ -10,6 +10,19 @@ local skipCheckClass = {
     ['table']         = true,
 }
 
+local function buildUndefinedFieldMessage(src)
+    local keyName = guide.getKeyName(src)
+    local missingViews = vm.getUndefinedFieldViews(src)
+    if missingViews then
+        local typeView = table.concat(missingViews, ', ')
+        if #missingViews == 1 then
+            return lang.script('DIAG_UNDEF_FIELD_FOR_TYPE', keyName, typeView)
+        end
+        return lang.script('DIAG_UNDEF_FIELD_FOR_TYPES', keyName, typeView)
+    end
+    return lang.script('DIAG_UNDEF_FIELD', keyName)
+end
+
 ---@async
 return function (uri, callback)
     local ast = files.getState(uri)
@@ -21,7 +34,7 @@ return function (uri, callback)
     local function checkUndefinedField(src)
         await.delay()
 
-        if vm.hasDef(src) then
+        if vm.hasAllDefs(src) then
             return
         end
         local node = src.node
@@ -37,7 +50,7 @@ return function (uri, callback)
                 return
             end
         end
-        local message = lang.script('DIAG_UNDEF_FIELD', guide.getKeyName(src))
+        local message = buildUndefinedFieldMessage(src)
         if     src.type == 'getfield' and src.field then
             callback {
                 start   = src.field.start,

@@ -451,14 +451,24 @@ function mt:resolve(uri, args)
                 return
             end
             if object.type == 'doc.type.sign' and object.node and object.node[1] and object.signs then
+                local matchedStructuredSign = false
                 if actual.type == 'doc.type.sign'
-                and actual.node
-                and actual.node[1] == object.node[1]
                 and actual.signs then
-                    for index, sign in ipairs(object.signs) do
-                        local actualSign = actual.signs[index]
-                        if actualSign then
-                            resolveCallbackGeneric(sign, actualSign)
+                    if actual.node
+                    and actual.node[1] == object.node[1] then
+                        matchedStructuredSign = true
+                        for index, sign in ipairs(object.signs) do
+                            local actualSign = actual.signs[index]
+                            if actualSign then
+                                resolveCallbackGeneric(sign, actualSign)
+                            end
+                        end
+                    elseif #actual.signs == #object.signs then
+                        for index, sign in ipairs(object.signs) do
+                            local actualSign = actual.signs[index]
+                            if actualSign then
+                                resolveCallbackGeneric(sign, actualSign)
+                            end
                         end
                     end
                 end
@@ -733,10 +743,17 @@ function mt:resolve(uri, args)
                             expandedSource = guide.getLocal(n, n[1], n.start) or n
                         end
                         local expandedNode = vm.compileNode(expandedSource)
+                        local expandedView = vm.getInfer(expandedNode):view(uri)
                         if (expandedSource.type == 'local' or expandedSource.type == 'setlocal')
                         and expandedSource.value then
                             local valueNode = resolveReturnExpression(expandedSource.value, 1)
-                            if valueNode and not valueNode:isEmpty() then
+                            if valueNode
+                            and not valueNode:isEmpty()
+                            and (
+                                not expandedView
+                                or expandedView == 'unknown'
+                                or hasUnresolvedGeneric(expandedNode)
+                            ) then
                                 expandedNode = valueNode
                             end
                         end
@@ -836,9 +853,10 @@ function mt:resolve(uri, args)
             if not object.node or not object.node[1] or not object.signs then
                 return
             end
+            ---@cast object parser.object
             local matchedStructuredSign = false
-            local fallbackStructuredSign
-            local fallbackStructuredCount = 0
+            local fallbackStructuredSigns = {}
+            local expectedStructuredNode = vm.compileNode(object)
             for n in node:eachObject() do
                 if n.type == 'doc.type.sign'
                 and n.node
@@ -851,24 +869,24 @@ function mt:resolve(uri, args)
                                 resolve(sign, vm.compileNode(resolvedSign))
                             end
                         end
-                    elseif #n.signs == #object.signs then
-                        fallbackStructuredCount = fallbackStructuredCount + 1
-                        fallbackStructuredSign = n
+                    elseif #n.signs == #object.signs
+                    and vm.canCastType(uri, expectedStructuredNode, vm.compileNode(n)) then
+                        fallbackStructuredSigns[#fallbackStructuredSigns+1] = n
                     end
                 end
             end
             if not matchedStructuredSign
-            and fallbackStructuredCount == 1
-            and fallbackStructuredSign
-            and fallbackStructuredSign.signs then
-                debugCollectTrace(uri, 'sign.resolve.sign-fallback', ('expected=%s actual=%s'):format(
-                    debugCollectView(uri, object),
-                    debugCollectView(uri, fallbackStructuredSign)
-                ))
-                for i, sign in ipairs(object.signs) do
-                    local resolvedSign = fallbackStructuredSign.signs[i]
-                    if resolvedSign then
-                        resolve(sign, vm.compileNode(resolvedSign))
+            and #fallbackStructuredSigns > 0 then
+                for _, fallbackStructuredSign in ipairs(fallbackStructuredSigns) do
+                    debugCollectTrace(uri, 'sign.resolve.sign-fallback', ('expected=%s actual=%s'):format(
+                        debugCollectView(uri, object),
+                        debugCollectView(uri, fallbackStructuredSign)
+                    ))
+                    for i, sign in ipairs(object.signs) do
+                        local resolvedSign = fallbackStructuredSign.signs[i]
+                        if resolvedSign then
+                            resolve(sign, vm.compileNode(resolvedSign))
+                        end
                     end
                 end
             end

@@ -5,6 +5,8 @@ local config   = require 'config'
 local glob     = require 'glob'
 local furi     = require 'file-uri'
 local parser   = require 'parser'
+local guide    = require 'parser.guide'
+local luadoc   = require 'parser.luadoc'
 local lang     = require 'language'
 local await    = require 'await'
 local util     = require 'utility'
@@ -555,6 +557,22 @@ function m.compileStateThen(state, file)
 
     local clock = os.clock()
     parser.luadoc(state)
+
+    guide.eachSourceType(state.ast, 'local', function (loc)
+        if not loc.inlineType or loc.inlineType == '' or loc.bindDocs then
+            return
+        end
+        local comment = {
+            type    = 'comment.short',
+            start   = loc.start,
+            finish  = loc.start,
+            text    = '-@type ' .. loc.inlineType,
+            virtual = true,
+        }
+        local doc = luadoc.buildAndBindDoc(state.ast, loc, comment)
+        luadoc.attachBuiltDoc(state.ast, loc, doc)
+    end)
+
     local passed = os.clock() - clock
     if passed > 0.1 then
         log.warn(('Parse LuaDoc of [%s] takes [%.3f] sec, size [%.3f] kb.'):format(file.uri, passed, #file.text / 1000))

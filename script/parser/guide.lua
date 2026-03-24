@@ -51,6 +51,7 @@ local type         = type
 ---@field vararg                parser.object
 ---@field param                 parser.object
 ---@field overload              parser.object
+---@field inlineType?           string
 ---@field docParamMap           table<string, integer>
 ---@field upvalues              table<string, string[]>
 ---@field ref                   parser.object[]

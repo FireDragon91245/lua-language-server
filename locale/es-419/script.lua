@@ -8,6 +8,10 @@ DIAG_UNDEF_GLOBAL       =
 'Variable global no definida `{}`.'
 DIAG_UNDEF_FIELD        =
 'Campo no definido `{}`.'
+DIAG_UNDEF_FIELD_FOR_TYPE =
+'El campo `{}` no está definido para el tipo `{}`.'
+DIAG_UNDEF_FIELD_FOR_TYPES =
+'El campo `{}` no está definido para los tipos `{}`.'
 DIAG_UNDEF_ENV_CHILD    =
 'Variable no definida `{}` (`_ENV` sobrecargado).'
 DIAG_UNDEF_FENV_CHILD   =

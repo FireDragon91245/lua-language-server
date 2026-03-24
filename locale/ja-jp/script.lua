@@ -8,6 +8,10 @@ DIAG_UNDEF_GLOBAL       =
 'グローバル変数 `{}` は未定義です。'
 DIAG_UNDEF_FIELD        =
 'プロパティ/フィールド `{}` は未定義です。'
+DIAG_UNDEF_FIELD_FOR_TYPE =
+'フィールド `{}` は型 `{}` では定義されていません。'
+DIAG_UNDEF_FIELD_FOR_TYPES =
+'フィールド `{}` は次の型では定義されていません: `{}`。'
 DIAG_UNDEF_ENV_CHILD    =
 '変数 `{}` は未定義です（`_ENV` オーバーロード）。'
 DIAG_UNDEF_FENV_CHILD   =

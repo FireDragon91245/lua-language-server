@@ -111,7 +111,7 @@ local v
 ---@type Bar
 local v2
 v2 = v
-v2:method1()
+v2:<!method1!>()
 v2:<!method2!>()
 ]]
 
@@ -129,6 +129,79 @@ TEST [[
 local n
 
 print(n.x)
+]]
+
+TEST [[
+---@class string
+
+---@class list<T>
+local list
+
+---@generic T
+---@param self list<T>
+function list:iter()
+end
+
+---@type list<string>|string
+local value
+
+value:<!iter!>()
+]]
+
+TEST [[
+---@class Foo
+---@field shared integer
+---@field onlyFoo integer
+local Foo
+
+---@class Bar
+---@field shared integer
+local Bar
+
+---@type Foo|Bar
+local value
+
+print(value.shared)
+print(value.<!onlyFoo!>)
+]]
+
+TEST [[
+---@class string
+
+---@class list<T>
+local list
+
+---@generic T
+---@param self list<T>
+function list:spread()
+end
+
+---@type list<string>|list<number>|string
+local test = ""
+
+local spread1, spread2 = test:<!spread!>()
+]]
+(function (diags)
+    local diag = diags[1]
+    assert(diag.message == [[字段 `spread` 在类型 `string` 中未定义。]])
+end)
+
+TEST [[
+---@class Foo
+---@field shared integer
+local Foo
+function Foo:common() end
+
+---@class Bar
+---@field shared integer
+local Bar
+function Bar:common() end
+
+---@type Foo|Bar
+local value
+
+print(value.shared)
+value:common()
 ]]
 
 TEST [[

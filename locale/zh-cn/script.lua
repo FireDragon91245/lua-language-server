@@ -8,6 +8,10 @@ DIAG_UNDEF_GLOBAL       =
 '未定义的全局变量 `{}`。'
 DIAG_UNDEF_FIELD        =
 '未定义的属性/字段 `{}`。'
+DIAG_UNDEF_FIELD_FOR_TYPE =
+'字段 `{}` 在类型 `{}` 中未定义。'
+DIAG_UNDEF_FIELD_FOR_TYPES =
+'字段 `{}` 在这些类型中未定义：`{}`。'
 DIAG_UNDEF_ENV_CHILD    =
 '未定义的变量 `{}`（重载了 `_ENV` ）。'
 DIAG_UNDEF_FENV_CHILD   =

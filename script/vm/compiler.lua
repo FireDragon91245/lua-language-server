@@ -1697,10 +1697,121 @@ local function getCallableClassGlobal(value)
         ---@cast value vm.global
         return value
     end
+    if value.type == 'doc.type.name' and value[1] then
+        return vm.getGlobal('type', value[1])
+    end
     if value.type == 'doc.type.sign' and value.node and value.node[1] then
         return vm.getGlobal('type', value.node[1])
     end
     return nil
+end
+
+---@param value vm.node.object
+---@return vm.global?
+---@return string?
+local function getCallableClassInfo(value)
+    local classGlobal = getCallableClassGlobal(value)
+    local typeName
+    if value.type == 'global' and value.cate == 'type' then
+        ---@cast value vm.global
+        typeName = value.name
+    elseif value.type == 'doc.type.name' and value[1] then
+        typeName = value[1]
+    elseif value.type == 'doc.type.sign' and value.node and value.node[1] then
+        typeName = value.node[1]
+    elseif value.type == 'string' or value.type == 'doc.type.string' then
+        classGlobal = vm.getGlobal('type', 'string')
+        typeName = 'string'
+    end
+    return classGlobal, typeName
+end
+
+---@param object vm.node.object
+---@return vm.node
+local function createSingleObjectNode(object)
+    local node = vm.createNode()
+    node:merge(object)
+    return node
+end
+
+---@param template parser.object
+---@param object vm.node.object
+---@return parser.object
+local function createBranchReceiverSource(template, object)
+    ---@diagnostic disable-next-line: missing-fields
+    local receiver = {
+        type = 'dummyarg',
+        parent = template.parent,
+        start = template.start,
+        finish = template.finish,
+    }
+    vm.setNode(receiver, createSingleObjectNode(object), true)
+    return receiver
+end
+
+---@param template parser.object
+---@param receiver parser.object
+---@param node vm.node
+---@return parser.object
+local function createBranchCallableSource(template, receiver, node)
+    ---@diagnostic disable-next-line: missing-fields
+    local callable = {
+        type = template.type,
+        parent = template.parent,
+        node = receiver,
+        start = template.start,
+        finish = template.finish,
+    }
+    if template.type == 'getmethod' then
+        callable.method = template.method
+    elseif template.type == 'getfield' then
+        callable.field = template.field
+    elseif template.type == 'getindex' then
+        callable.index = template.index
+    end
+    vm.setNode(callable, node, true)
+    return callable
+end
+
+---@param uri uri
+---@param receiverObject vm.node.object
+---@param key string
+---@return vm.node
+local function buildBranchCallableNode(uri, receiverObject, key)
+    local rebuiltNode = vm.createNode()
+
+    local function mergeCandidates(target)
+        if not target or type(target) ~= 'table' or not target.type then
+            return
+        end
+        vm.compileByParentNode(target, key, function (src)
+            rebuiltNode:merge(vm.compileNode(src))
+        end)
+    end
+
+    if receiverObject.type ~= 'global' then
+        mergeCandidates(receiverObject)
+        if receiverObject.type == 'local' and receiverObject.value then
+            mergeCandidates(receiverObject.value)
+        end
+    end
+
+    local classGlobal, typeName = getCallableClassInfo(receiverObject)
+    if classGlobal then
+        vm.getClassFields(uri, classGlobal, key, function (field)
+            rebuiltNode:merge(vm.compileNode(field))
+        end)
+    end
+    if typeName then
+        local globalField = vm.getGlobal('variable', typeName, key)
+        if globalField then
+            for _, set in ipairs(globalField:getSets(uri)) do
+                rebuiltNode:merge(vm.compileNode(set))
+            end
+        end
+    end
+
+    return rebuiltNode
 end
 
 ---@param func parser.object
@@ -2048,20 +2159,39 @@ end
 ---@param mfunc  parser.object
 ---@param index  integer
 ---@param args   parser.object[]
-local function bindReturnOfFunction(source, mfunc, index, args)
+local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
     local uri = guide.getUri(source)
+    local originalCallFunc = source.func
+    callFunc = callFunc or source.func
+    local isBranchResolved = originalCallFunc ~= nil and callFunc ~= originalCallFunc
+    local genericNames = nil
+    local resolvedGenericKeys = nil
+    do
+        local sign = vm.getSign(mfunc)
+        if sign and sign.docGeneric and #sign.docGeneric > 0 then
+            genericNames = {}
+            for _, doc in ipairs(sign.docGeneric) do
+                if doc[1] then
+                    genericNames[doc[1]] = true
+                end
+            end
+        end
+    end
     local returnObject = vm.getReturnOfFunction(mfunc, index)
     if not returnObject then
         vm.setNode(source, vm.declareGlobal('type', 'nil'))
         debugCollectTrace(uri, 'bindReturnOfFunction',
-            ('func=%s return=nil args=[%s]'):format(source.func and guide.getKeyName(source.func) or mfunc.type,
+            ('func=%s return=nil args=[%s]'):format(callFunc and guide.getKeyName(callFunc) or mfunc.type,
                 debugCollectArgsView(uri, args)))
         return
     end
 
     local resolveArgs = args
-    if source.func and source.func.type == 'getmethod' then
-        local receiver = source.func.node
+    if callFunc and callFunc.type == 'getmethod' then
+        local receiver = callFunc.node
+        if receiver and receiver.type == 'getlocal' then
+            receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+        end
         if receiver then
             local sign = vm.getSign(mfunc)
             if sign and args and #args == #sign.signList then
@@ -2078,7 +2208,7 @@ local function bindReturnOfFunction(source, mfunc, index, args)
     end
 
     debugCollectTrace(uri, 'bindReturnOfFunction', ('func=%s return=%s args=[%s] resolve=[%s]'):format(
-        source.func and guide.getKeyName(source.func) or mfunc.type,
+        callFunc and guide.getKeyName(callFunc) or mfunc.type,
         debugCollectView(uri, returnObject),
         debugCollectArgsView(uri, args),
         debugCollectArgsView(uri, resolveArgs)
@@ -2087,22 +2217,47 @@ local function bindReturnOfFunction(source, mfunc, index, args)
     local returnNode = vm.compileNode(returnObject)
 
     local selfGenericResolved = nil
-    if source.func and source.func.type == 'getmethod' and (mfunc.type == 'function' or mfunc.type == 'doc.type.function') and mfunc.bindDocs then
-        local receiver = source.func.node
+    if callFunc and callFunc.type == 'getmethod' and (mfunc.type == 'function' or mfunc.type == 'doc.type.function') then
+        local receiver = callFunc.node
+        if receiver and receiver.type == 'getlocal' then
+            receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+        end
         if receiver then
             local receiverNode = vm.compileNode(receiver)
-            local selfGenericName = nil
-            for _, doc in ipairs(mfunc.bindDocs) do
-                if doc.type == 'doc.param' and doc.param and doc.param[1] == 'self' then
-                    if doc.extends then
-                        for _, typeUnit in ipairs(doc.extends.types or {}) do
-                            if typeUnit.type == 'doc.generic.name' then
-                                selfGenericName = typeUnit[1]
-                                break
+            if mfunc.type == 'doc.type.function' then
+                for item in receiverNode:eachObject() do
+                    if item.type == 'doc.type.sign' and item.node and item.node[1] and item.signs then
+                        local classGlobal = vm.getGlobal('type', item.node[1])
+                        if classGlobal then
+                            local genericMap = vm.getClassGenericMap(uri, classGlobal, item.signs)
+                            if genericMap then
+                                selfGenericResolved = selfGenericResolved or {}
+                                for key, value in pairs(genericMap) do
+                                    if selfGenericResolved[key] then
+                                        selfGenericResolved[key]:merge(value)
+                                    else
+                                        selfGenericResolved[key] = value
+                                    end
+                                end
                             end
                         end
                     end
-                    break
+                end
+            end
+            local selfGenericName = nil
+            if mfunc.bindDocs then
+                for _, doc in ipairs(mfunc.bindDocs) do
+                    if doc.type == 'doc.param' and doc.param and doc.param[1] == 'self' then
+                        if doc.extends then
+                            for _, typeUnit in ipairs(doc.extends.types or {}) do
+                                if typeUnit.type == 'doc.generic.name' then
+                                    selfGenericName = typeUnit[1]
+                                    break
+                                end
+                            end
+                        end
+                        break
+                    end
                 end
             end
             if selfGenericName then
@@ -2116,9 +2271,11 @@ local function bindReturnOfFunction(source, mfunc, index, args)
                     end
                 end
                 if not filteredNode:isEmpty() then
-                    selfGenericResolved = { [selfGenericName] = filteredNode }
+                    selfGenericResolved = selfGenericResolved or {}
+                    selfGenericResolved[selfGenericName] = filteredNode
                 else
-                    selfGenericResolved = { [selfGenericName] = receiverNode }
+                    selfGenericResolved = selfGenericResolved or {}
+                    selfGenericResolved[selfGenericName] = receiverNode
                 end
             end
         end
@@ -2134,7 +2291,7 @@ local function bindReturnOfFunction(source, mfunc, index, args)
                 end
                 table.sort(resolvedParts)
                 debugCollectTrace(uri, 'bindReturnOfFunction.generic', ('func=%s proto=%s resolved={%s}'):format(
-                    source.func and guide.getKeyName(source.func) or mfunc.type,
+                    callFunc and guide.getKeyName(callFunc) or mfunc.type,
                     debugCollectView(uri, rnode.proto),
                     table.concat(resolvedParts, ', ')
                 ))
@@ -2194,52 +2351,114 @@ local function bindReturnOfFunction(source, mfunc, index, args)
 
     local call = source.parent
     if not selfGenericResolved and call and call.type == 'call' then
-        local callNode = call.node
+        local callNode = callFunc or call.node
         if callNode and (callNode.type == 'getmethod' or callNode.type == 'getfield') then
             local receiver = callNode.node
+            if receiver and receiver.type == 'getlocal' then
+                receiver = guide.getLocal(receiver, receiver[1], receiver.start) or receiver
+            end
             if receiver then
                 local receiverNode = vm.compileNode(receiver)
-                for rn in receiverNode:eachObject() do
-                    if rn.type == 'doc.type.sign' and rn.signs and rn.node and rn.node[1] then
-                        local classGlobal = vm.getGlobal('type', rn.node[1])
-                        if classGlobal then
-                            local genericMap = vm.getClassGenericMap(guide.getUri(source), classGlobal, rn.signs)
-                            if genericMap and mfunc.bindDocs then
-                                for _, doc in ipairs(mfunc.bindDocs) do
-                                    if doc.type == 'doc.return' then
-                                        for _, rtn in ipairs(doc.returns) do
-                                            if rtn.returnIndex == index then
-                                                local resolvedMap = genericMap
-                                                local sign = vm.getSign(mfunc)
-                                                if sign and resolveArgs and #resolveArgs > 0 then
-                                                    local callResolved = sign:resolve(guide.getUri(source), resolveArgs)
-                                                    if callResolved and next(callResolved) then
-                                                        resolvedMap = {}
-                                                        for k, v in pairs(callResolved) do
-                                                            resolvedMap[k] = v
-                                                        end
-                                                        for k, v in pairs(genericMap) do
-                                                            resolvedMap[k] = v
-                                                        end
-                                                    end
+                local appliedReceiverGenericMap = false
+                local function applyReceiverGenericMap(genericMap)
+                    if not genericMap then
+                        return false
+                    end
+                    local resolvedMap = genericMap
+                    local sign = vm.getSign(mfunc)
+                    if sign and resolveArgs and #resolveArgs > 0 then
+                        local callResolved = sign:resolve(guide.getUri(source), resolveArgs)
+                        if callResolved and next(callResolved) then
+                            resolvedMap = {}
+                            for k, v in pairs(callResolved) do
+                                resolvedMap[k] = v
+                            end
+                            for k, v in pairs(genericMap) do
+                                resolvedMap[k] = v
+                            end
+                        end
+                    end
+                    resolvedGenericKeys = {}
+                    for key in pairs(resolvedMap) do
+                        resolvedGenericKeys[key] = true
+                    end
+
+                    local mappedReturnNode = vm.createNode()
+                    local hasMappedReturn = false
+                    for currentReturn in returnNode:eachObject() do
+                        if currentReturn.type == 'global'
+                        and currentReturn.cate == 'type'
+                        and resolvedMap[currentReturn.name] then
+                            mappedReturnNode:merge(resolvedMap[currentReturn.name])
+                            hasMappedReturn = true
+                        elseif currentReturn.type == 'global' or currentReturn.type == 'variable' then
+                            mappedReturnNode:merge(currentReturn)
+                        else
+                            local clonedReturn = vm.cloneObject(currentReturn, resolvedMap)
+                            if clonedReturn then
+                                mappedReturnNode:merge(vm.compileNode(clonedReturn))
+                                hasMappedReturn = true
+                            else
+                                mappedReturnNode:merge(currentReturn)
+                            end
+                        end
+                    end
+                    if hasMappedReturn then
+                        returnNode = mappedReturnNode
+                    end
+                    if mfunc.bindDocs then
+                        for _, doc in ipairs(mfunc.bindDocs) do
+                            if doc.type == 'doc.return' then
+                                for _, rtn in ipairs(doc.returns) do
+                                    if rtn.returnIndex == index then
+                                        local newRtn = vm.cloneObject(rtn, resolvedMap)
+                                        if newRtn then
+                                            returnNode = vm.compileNode(newRtn)
+                                            for rnode in returnNode:eachObject() do
+                                                if rnode.type == 'generic' then
+                                                    returnNode = rnode:resolve(guide.getUri(source), resolveArgs)
+                                                    break
                                                 end
-                                                local newRtn = vm.cloneObject(rtn, resolvedMap)
-                                                if newRtn then
-                                                    returnNode = vm.compileNode(newRtn)
-                                                    for rnode in returnNode:eachObject() do
-                                                        if rnode.type == 'generic' then
-                                                            returnNode = rnode:resolve(guide.getUri(source), resolveArgs)
-                                                            break
-                                                        end
-                                                    end
-                                                end
-                                                break
                                             end
                                         end
                                         break
                                     end
                                 end
+                                break
                             end
+                        end
+                    end
+                    return true
+                end
+                for rn in receiverNode:eachObject() do
+                    if rn.type == 'doc.type.sign' and rn.signs and rn.node and rn.node[1] then
+                        local classGlobal = vm.getGlobal('type', rn.node[1])
+                        if classGlobal then
+                            local genericMap = vm.getClassGenericMap(guide.getUri(source), classGlobal, rn.signs)
+                            if applyReceiverGenericMap(genericMap) then
+                                appliedReceiverGenericMap = true
+                            end
+                            break
+                        end
+                    end
+                end
+                if not appliedReceiverGenericMap and receiver.bindDocs then
+                    for _, doc in ipairs(receiver.bindDocs) do
+                        if doc.type == 'doc.type' then
+                            for _, typeUnit in ipairs(doc.types or {}) do
+                                if typeUnit.type == 'doc.type.sign' and typeUnit.node and typeUnit.node[1] and typeUnit.signs then
+                                    local classGlobal = vm.getGlobal('type', typeUnit.node[1])
+                                    if classGlobal then
+                                        local genericMap = vm.getClassGenericMap(guide.getUri(source), classGlobal, typeUnit.signs)
+                                        if applyReceiverGenericMap(genericMap) then
+                                            appliedReceiverGenericMap = true
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        if appliedReceiverGenericMap then
                             break
                         end
                     end
@@ -2248,14 +2467,123 @@ local function bindReturnOfFunction(source, mfunc, index, args)
         end
     end
 
+    local function isUnresolvedReturnPlaceholder(object)
+        local function isResolvedGenericKey(name)
+            return (genericNames and genericNames[name]) or (resolvedGenericKeys and resolvedGenericKeys[name])
+        end
+        local function containsResolvedGeneric(obj)
+            if not obj then
+                return false
+            end
+            if obj.type == 'doc.generic.name' then
+                return vm.getGenericResolved(obj) == nil
+            end
+            if obj.type == 'doc.type.name' and obj[1] then
+                return isResolvedGenericKey(obj[1])
+            end
+            if obj.type == 'global' and obj.cate == 'type' then
+                return isResolvedGenericKey(obj.name)
+            end
+            if obj.type == 'doc.type' and obj.types then
+                for _, typeUnit in ipairs(obj.types) do
+                    if containsResolvedGeneric(typeUnit) then
+                        return true
+                    end
+                end
+            elseif obj.type == 'doc.type.array' then
+                return containsResolvedGeneric(obj.node)
+            elseif obj.type == 'doc.type.sign' and obj.signs then
+                for _, sign in ipairs(obj.signs) do
+                    if containsResolvedGeneric(sign) then
+                        return true
+                    end
+                end
+            elseif obj.type == 'doc.type.table' and obj.fields then
+                for _, field in ipairs(obj.fields) do
+                    if containsResolvedGeneric(field.name) or containsResolvedGeneric(field.extends) then
+                        return true
+                    end
+                end
+            end
+            return false
+        end
+        if object.type == 'doc.generic.name' then
+            return vm.getGenericResolved(object) == nil
+        end
+        if object.type == 'doc.type.name' and object[1] then
+            return isResolvedGenericKey(object[1])
+        end
+        if object.type == 'global' and object.cate == 'type' then
+            return isResolvedGenericKey(object.name)
+        end
+        return containsResolvedGeneric(object)
+    end
+
+    local hasConcreteReturn = false
+    for rnode in returnNode:eachObject() do
+        if not isUnresolvedReturnPlaceholder(rnode) then
+            hasConcreteReturn = true
+            break
+        end
+    end
+
     if returnNode then
+        if not isBranchResolved and not resolvedGenericKeys then
+            for rnode in returnNode:eachObject() do
+                if rnode.type ~= 'doc.generic.name' then
+                    vm.setNode(source, rnode)
+                end
+            end
+            if returnNode:isOptional() then
+                vm.getNode(source):addOptional()
+            end
+            return
+        end
+        if resolvedGenericKeys and not isBranchResolved then
+            vm.setNode(source, vm.createNode(), true)
+        end
+        local existingNode = vm.getNode(source)
+        if hasConcreteReturn and existingNode then
+            local placeholders = vm.createNode()
+            for existing in existingNode:eachObject() do
+                if isUnresolvedReturnPlaceholder(existing) then
+                    placeholders:merge(existing)
+                end
+            end
+            if not placeholders:isEmpty() then
+                existingNode:removeNode(placeholders)
+            end
+            existingNode:remove 'unknown'
+        end
+        if not hasConcreteReturn then
+            local existingView = existingNode and vm.getInfer(existingNode):view(uri) or nil
+            if existingView and existingView ~= 'unknown' and existingView ~= 'nil' then
+                return
+            end
+            if returnNode:isOptional() then
+                local targetNode = vm.getNode(source)
+                if not targetNode then
+                    targetNode = vm.createNode()
+                    vm.setNode(source, targetNode, true)
+                end
+                targetNode:addOptional()
+            else
+                vm.setNode(source, vm.declareGlobal('type', 'unknown'))
+            end
+            return
+        end
         for rnode in returnNode:eachObject() do
-            if rnode.type ~= 'doc.generic.name' then
+            if not isUnresolvedReturnPlaceholder(rnode) then
                 vm.setNode(source, rnode)
             end
         end
         if returnNode:isOptional() then
-            vm.getNode(source):addOptional()
+            local targetNode = vm.getNode(source)
+            if not targetNode then
+                targetNode = vm.createNode()
+                vm.setNode(source, targetNode, true)
+            end
+            targetNode:addOptional()
         end
     end
 end
@@ -2264,9 +2592,10 @@ end
 ---@param func parser.object
 ---@param operator parser.object
 ---@param index integer
+---@return boolean
 local function bindReturnOfCallOperator(source, func, operator, index)
     if operator.op[1] ~= 'call' or not operator.extends then
-        return
+        return false
     end
 
     ---@param signs parser.object[]?
@@ -2313,11 +2642,14 @@ local function bindReturnOfCallOperator(source, func, operator, index)
         operatorReturn = nil
     end
     if not operatorReturn then
-        return
+        return false
     end
 
     local uri = guide.getUri(source)
-    local actualFunc = func.exp or func
+    local actualFunc = func
+    if func.exp and not vm.getNode(func) then
+        actualFunc = func.exp
+    end
     local receiverNode = vm.compileNode(actualFunc)
     local expNode = operator.exp and vm.compileNode(operator.exp) or nil
     local matched = false
@@ -2456,9 +2788,109 @@ local function bindReturnOfCallOperator(source, func, operator, index)
         end
     end
     if not matched or result:isEmpty() then
-        return
+        return false
     end
     vm.setNode(source, result)
+    return true
+end
+
+---@param source parser.object
+---@param func parser.object
+---@param args parser.object[]?
+---@param index integer
+---@return boolean
+local function bindUnionMemberCallReturns(source, func, args, index)
+    if func.type ~= 'getfield' and func.type ~= 'getmethod' then
+        return false
+    end
+
+    local key = guide.getKeyName(func)
+    local receiver = func.node
+    if not key or not receiver then
+        return false
+    end
+
+    local uri = guide.getUri(source)
+    local receiverNode = vm.compileNode(receiver)
+    local receiverSubViews = vm.getInfer(receiverNode):getSubViews(uri) or {}
+    if #receiverNode <= 1 or #receiverSubViews <= 1 then
+        return false
+    end
+
+    local hasResolved = false
+    for receiverObject in receiverNode:eachObject() do
+        local branchCallableNode = buildBranchCallableNode(uri, receiverObject, key)
+        if branchCallableNode:isEmpty() then
+            goto NEXT_RECEIVER
+        end
+
+        local branchReceiver = createBranchReceiverSource(receiver, receiverObject)
+        local branchFunc = createBranchCallableSource(func, branchReceiver, branchCallableNode)
+        local matchedFuncs = vm.getExactMatchedFunctions(branchFunc, args)
+        local branchMatched = false
+        local hasDocumentedFunction = false
+        local hasDirectCallable = false
+        for nd in branchCallableNode:eachObject() do
+            if nd.type == 'function' and nd.bindDocs then
+                hasDocumentedFunction = true
+                break
+            end
+        end
+        for nd in branchCallableNode:eachObject() do
+            if nd.type == 'function' or nd.type == 'doc.type.function' then
+                if not (matchedFuncs and not util.arrayHas(matchedFuncs, nd)) then
+                    hasDirectCallable = true
+                    break
+                end
+            end
+        end
+
+        for nd in branchCallableNode:eachObject() do
+            if nd.type == 'function' or nd.type == 'doc.type.function' then
+                ---@cast nd parser.object
+                if nd.type == 'doc.type.function' and hasDocumentedFunction then
+                    goto NEXT_NODE
+                end
+                if matchedFuncs and not util.arrayHas(matchedFuncs, nd) then
+                    goto NEXT_NODE
+                end
+                bindReturnOfFunction(source, nd, index, args or {}, branchFunc)
+                branchMatched = true
+                hasResolved = true
+            elseif not hasDirectCallable then
+                local classGlobal = getCallableClassGlobal(nd)
+                if classGlobal then
+                    local classArgs = buildCallArgsWithImplicitSelf(branchFunc, args)
+                    eachClassSetWithExtends(uri, classGlobal, function (set)
+                        for _, overload in ipairs(set.calls) do
+                            bindReturnOfFunction(source, overload.overload, index, classArgs, branchFunc)
+                            branchMatched = true
+                            hasResolved = true
+                        end
+                    end)
+                end
+            end
+            ::NEXT_NODE::
+        end
+
+        if not branchMatched then
+            for nd in branchCallableNode:eachObject() do
+                local classGlobal = getCallableClassGlobal(nd)
+                if classGlobal then
+                    eachClassSetWithExtends(uri, classGlobal, function (set)
+                        for _, operator in ipairs(set.operators or {}) do
+                            bindReturnOfCallOperator(source, branchFunc, operator, index)
+                            hasResolved = true
+                        end
+                    end)
+                end
+            end
+        end
+
+        ::NEXT_RECEIVER::
+    end
+
+    return hasResolved
 end
 
 local compilerSwitch = util.switch()
@@ -2908,6 +3340,60 @@ local compilerSwitch = util.switch()
             end
             return
         end
+        if func.type == 'dummyfunc' and func.exp then
+            local resolvedDummyOperator = false
+            local expNode = vm.compileNode(func.exp)
+            local uri = guide.getUri(source)
+            local fallbackNode = vm.createNode()
+            local sawSignedIterator = false
+            for receiverObject in expNode:eachObject() do
+                local branchReceiver = createBranchReceiverSource(func.exp, receiverObject)
+                local classGlobal = getCallableClassGlobal(receiverObject)
+                if receiverObject.type == 'doc.type.sign' and receiverObject.signs then
+                    sawSignedIterator = true
+                    local sign = receiverObject.signs[index]
+                    if sign then
+                        fallbackNode:merge(vm.compileNode(sign))
+                    end
+                end
+                if classGlobal then
+                    eachClassSetWithExtends(uri, classGlobal, function (set)
+                        local classArgs = buildCallArgsWithImplicitSelf(branchReceiver, args)
+                        for _, overload in ipairs(set.calls or {}) do
+                            bindReturnOfFunction(source, overload.overload, index, classArgs, branchReceiver)
+                            do
+                                local currentNode = vm.getNode(source)
+                                if currentNode then
+                                    local currentView = vm.getInfer(currentNode):view(uri)
+                                    if currentView ~= 'unknown' then
+                                        resolvedDummyOperator = true
+                                    end
+                                end
+                            end
+                        end
+                        for _, operator in ipairs(set.operators or {}) do
+                            if bindReturnOfCallOperator(source, branchReceiver, operator, index) then
+                                resolvedDummyOperator = true
+                            end
+                        end
+                    end)
+                end
+            end
+            if resolvedDummyOperator then
+                if not vm.getNode(source) and index > 1 then
+                    vm.setNode(source, vm.declareGlobal('type', 'nil'))
+                end
+                return
+            end
+            if not fallbackNode:isEmpty() then
+                vm.setNode(source, fallbackNode)
+                return
+            end
+            if sawSignedIterator and index > 1 then
+                vm.setNode(source, vm.declareGlobal('type', 'nil'))
+                return
+            end
+        end
         if func.special == 'require' then
             if index == 2 then
                 local uri = guide.getUri(source)
@@ -2946,6 +3432,9 @@ local compilerSwitch = util.switch()
                 return
             end
             vm.setNode(source, vm.compileNode(ast))
+            return
+        end
+        if bindUnionMemberCallReturns(source, func, args, index) then
             return
         end
         local funcNode = vm.compileNode(func)
@@ -3005,16 +3494,35 @@ local compilerSwitch = util.switch()
             end
         end
         local matchedFuncs = vm.getExactMatchedFunctions(func, args)
+        local hasDocumentedFunction = false
+        local hasDirectCallable = false
+        for nd in funcNode:eachObject() do
+            if nd.type == 'function' and nd.bindDocs then
+                hasDocumentedFunction = true
+                break
+            end
+        end
+        for nd in funcNode:eachObject() do
+            if nd.type == 'function' or nd.type == 'doc.type.function' then
+                if not (matchedFuncs and not util.arrayHas(matchedFuncs, nd)) then
+                    hasDirectCallable = true
+                    break
+                end
+            end
+        end
         ---@type vm.node?
         for nd in funcNode:eachObject() do
             if nd.type == 'function'
             or nd.type == 'doc.type.function' then
                 ---@cast nd parser.object
+                if nd.type == 'doc.type.function' and hasDocumentedFunction then
+                    goto CONTINUE
+                end
                 if matchedFuncs and not util.arrayHas(matchedFuncs, nd) then
                     goto CONTINUE
                 end
                 bindReturnOfFunction(source, nd, index, args)
-            else
+            elseif not hasDirectCallable then
                 local classGlobal = getCallableClassGlobal(nd)
                 if not classGlobal then
                     goto CONTINUE
@@ -3029,8 +3537,8 @@ local compilerSwitch = util.switch()
             ::CONTINUE::
         end
         local node = vm.getNode(source)
+        local uri = guide.getUri(source)
         if not node or not node:isTyped() then
-            local uri = guide.getUri(source)
             for nd in funcNode:eachObject() do
                 local classGlobal = getCallableClassGlobal(nd)
                 if not classGlobal then

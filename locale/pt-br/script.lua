@@ -8,6 +8,10 @@ DIAG_UNDEF_GLOBAL       =
 'Escopo global indefinido `{}`.'
 DIAG_UNDEF_FIELD        =
 'Campo indefinido `{}`.'
+DIAG_UNDEF_FIELD_FOR_TYPE =
+'O campo `{}` não está definido para o tipo `{}`.'
+DIAG_UNDEF_FIELD_FOR_TYPES =
+'O campo `{}` não está definido para os tipos `{}`.'
 DIAG_UNDEF_ENV_CHILD    =
 'Variável indefinida `{}` (overloaded `_ENV` ).'
 DIAG_UNDEF_FENV_CHILD   =

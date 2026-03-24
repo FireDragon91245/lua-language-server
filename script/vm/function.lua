@@ -492,18 +492,19 @@ function getReceiverGenericMap(uri, callFunc)
         return nil
     end
     local receiverNode = vm.compileNode(receiver)
+    local merged
     for item in receiverNode:eachObject() do
         if item.type == 'doc.type.sign' and item.node and item.node[1] and item.signs then
             local classGlobal = vm.getGlobal('type', item.node[1])
             if classGlobal then
                 local genericMap = vm.getClassGenericMap(uri, classGlobal, item.signs)
                 if genericMap then
-                    return genericMap
+                    merged = mergeResolvedGenerics(merged, genericMap)
                 end
             end
         end
     end
-    return nil
+    return merged
 end
 
 ---@param resolved table<string, vm.node>?

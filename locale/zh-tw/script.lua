@@ -8,6 +8,10 @@ DIAG_UNDEF_GLOBAL       =
 '未定義的全域變數 `{}`。'
 DIAG_UNDEF_FIELD        =
 '未定義的屬性/欄位 `{}`。'
+DIAG_UNDEF_FIELD_FOR_TYPE =
+'欄位 `{}` 在型別 `{}` 中未定義。'
+DIAG_UNDEF_FIELD_FOR_TYPES =
+'欄位 `{}` 在這些型別中未定義：`{}`。'
 DIAG_UNDEF_ENV_CHILD    =
 '未定義的變數 `{}`（多載了 `_ENV` ）。'
 DIAG_UNDEF_FENV_CHILD   =
