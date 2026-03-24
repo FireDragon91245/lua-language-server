@@ -114,16 +114,25 @@ local function isAliasClass(classGlobal, uri)
     return false
 end
 
+---@param source parser.object
 ---@param object vm.node.object
 ---@return vm.global?
 ---@return string?
-local function getMemberClassInfo(object)
+local function getMemberClassInfo(source, object)
     local classGlobal
     local typeName
     if object.type == 'global' and object.cate == 'type' then
         ---@cast object vm.global
         classGlobal = object
         typeName = object.name
+    elseif object.type == 'doc.class' then
+        ---@cast object parser.object
+        classGlobal = vm.getGlobalNode(object)
+        typeName = classGlobal and classGlobal.name or nil
+    elseif object.type == 'doc.class.name' then
+        ---@cast object parser.object
+        classGlobal = vm.getGlobalNode(object.parent)
+        typeName = classGlobal and classGlobal.name or nil
     elseif object.type == 'doc.type.name' and object[1] then
         typeName = object[1]
         classGlobal = vm.getGlobal('type', typeName)
@@ -133,8 +142,30 @@ local function getMemberClassInfo(object)
     elseif object.type == 'string' or object.type == 'doc.type.string' then
         typeName = 'string'
         classGlobal = vm.getGlobal('type', typeName)
+    elseif object.type ~= 'global' and object.type ~= 'generic' and object.type ~= 'variable' then
+        ---@cast object parser.object
+        classGlobal = vm.getDefinedClass(guide.getUri(source), object)
+        typeName = classGlobal and classGlobal.name or nil
     end
     return classGlobal, typeName
+end
+
+---@param source parser.object
+---@param receiverNode vm.node
+---@return string[]
+local function getReceiverViews(source, receiverNode)
+    local uri = guide.getUri(source)
+    local mark = {}
+    local views = {}
+    for object in receiverNode:eachObject() do
+        local view = vm.viewObject(object, uri)
+        if view and not mark[view] then
+            mark[view] = true
+            views[#views+1] = view
+        end
+    end
+    table.sort(views)
+    return views
 end
 
 ---@param source parser.object
@@ -157,7 +188,19 @@ local function hasMemberOnObject(source, object, key)
         end
     end
 
-    local classGlobal, typeName = getMemberClassInfo(object)
+    if object.type == 'global' then
+        ---@cast object vm.global
+        if object.cate == 'variable' then
+            local globalField = vm.getGlobal('variable', object.name, key)
+            if globalField then
+                for _ in ipairs(globalField:getSets(uri)) do
+                    return true
+                end
+            end
+        end
+    end
+
+    local classGlobal, typeName = getMemberClassInfo(source, object)
     if classGlobal then
         if isAliasClass(classGlobal, uri) then
             return nil
@@ -240,7 +283,12 @@ function vm.hasAllDefs(source)
     end
 
     local receiverNode = vm.compileNode(receiver)
-    if #receiverNode <= 1 then
+    if #receiverNode == 0 then
+        return vm.hasDef(source)
+    end
+
+    local receiverViews = getReceiverViews(source, receiverNode)
+    if #receiverViews <= 1 then
         return vm.hasDef(source)
     end
 
@@ -280,7 +328,8 @@ function vm.getUndefinedFieldViews(source)
 
     local uri = guide.getUri(source)
     local receiverNode = vm.compileNode(receiver)
-    if #receiverNode <= 1 then
+    local receiverViews = getReceiverViews(source, receiverNode)
+    if #receiverViews <= 1 then
         return nil
     end
 

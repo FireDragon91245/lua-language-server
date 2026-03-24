@@ -1248,6 +1248,7 @@ local function compileCallArgNode(arg, call, callNode, fixIndex, myIndex)
                 ---@type parser.object|vm.generic?
                 local resolvedSelfArg
                 if sign then
+                    ---@cast sign vm.sign
                     local args = buildResolveArgs(myIndex - 1)
                     local resolved = sign:resolve(guide.getUri(call), args)
                     local receiverGenericMap = buildReceiverGenericMap()
@@ -2053,6 +2054,7 @@ local function compileLocal(source)
     if source.bindDocs then
         hasMarkDoc = vm.bindDocs(source)
     end
+
     local hasMarkParam
     if not hasMarkDoc then
         local selfNode = guide.getSelfNode(source)
@@ -2065,6 +2067,7 @@ local function compileLocal(source)
             myNode:remove 'function'
         end
     end
+
     local hasMarkValue
     if (not hasMarkDoc and source.value)
     or (source.value and source.value.type == 'table') then
@@ -2194,7 +2197,12 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
         end
         if receiver then
             local sign = vm.getSign(mfunc)
-            if sign and args and #args == #sign.signList then
+            if args and args[1] and args[1].type == 'self' then
+                resolveArgs = { receiver }
+                for i = 2, #args do
+                    resolveArgs[#resolveArgs+1] = args[i]
+                end
+            elseif sign and args and #args == #sign.signList then
                 resolveArgs = args
             else
                 resolveArgs = { receiver }
@@ -2224,20 +2232,18 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
         end
         if receiver then
             local receiverNode = vm.compileNode(receiver)
-            if mfunc.type == 'doc.type.function' then
-                for item in receiverNode:eachObject() do
-                    if item.type == 'doc.type.sign' and item.node and item.node[1] and item.signs then
-                        local classGlobal = vm.getGlobal('type', item.node[1])
-                        if classGlobal then
-                            local genericMap = vm.getClassGenericMap(uri, classGlobal, item.signs)
-                            if genericMap then
-                                selfGenericResolved = selfGenericResolved or {}
-                                for key, value in pairs(genericMap) do
-                                    if selfGenericResolved[key] then
-                                        selfGenericResolved[key]:merge(value)
-                                    else
-                                        selfGenericResolved[key] = value
-                                    end
+            for item in receiverNode:eachObject() do
+                if item.type == 'doc.type.sign' and item.node and item.node[1] and item.signs then
+                    local classGlobal = vm.getGlobal('type', item.node[1])
+                    if classGlobal then
+                        local genericMap = vm.getClassGenericMap(uri, classGlobal, item.signs)
+                        if genericMap then
+                            selfGenericResolved = selfGenericResolved or {}
+                            for key, value in pairs(genericMap) do
+                                if selfGenericResolved[key] then
+                                    selfGenericResolved[key]:merge(value)
+                                else
+                                    selfGenericResolved[key] = value
                                 end
                             end
                         end
@@ -2330,22 +2336,99 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
             end
         end
         if hasUnresolvedGeneric then
+            local resolved = nil
             local sign = vm.getSign(mfunc)
             if sign and resolveArgs and #resolveArgs > 0 then
-                local resolved = sign:resolve(guide.getUri(source), resolveArgs)
-                if resolved and next(resolved) then
-                    local newReturnNode = vm.createNode()
-                    for rnode in returnNode:eachObject() do
-                        local cloned = vm.cloneObject(rnode, resolved)
-                        if cloned then
-                            newReturnNode:merge(vm.compileNode(cloned))
-                        else
-                            newReturnNode:merge(rnode)
-                        end
-                    end
-                    returnNode = newReturnNode
+                ---@cast sign vm.sign
+                resolved = sign:resolve(guide.getUri(source), resolveArgs)
+            end
+            if selfGenericResolved then
+                resolved = resolved or {}
+                for key, value in pairs(selfGenericResolved) do
+                    resolved[key] = value
                 end
             end
+            if resolved and next(resolved) then
+                local newReturnNode = vm.createNode()
+                for rnode in returnNode:eachObject() do
+                    local cloned = vm.cloneObject(rnode, resolved)
+                    if cloned then
+                        newReturnNode:merge(vm.compileNode(cloned))
+                    else
+                        newReturnNode:merge(rnode)
+                    end
+                end
+                returnNode = newReturnNode
+            end
+        end
+    end
+
+    if selfGenericResolved then
+        local function hasSelfGenericPlaceholder(obj)
+            if not obj then
+                return false
+            end
+            if obj.type == 'doc.generic.name' then
+                return vm.getGenericResolved(obj) == nil and selfGenericResolved[obj[1]] ~= nil
+            end
+            if obj.type == 'doc.type.name' and obj[1] then
+                return selfGenericResolved[obj[1]] ~= nil
+            end
+            if obj.type == 'global' and obj.cate == 'type' then
+                return selfGenericResolved[obj.name] ~= nil
+            end
+            if obj.type == 'doc.type' and obj.types then
+                for _, typeUnit in ipairs(obj.types) do
+                    if hasSelfGenericPlaceholder(typeUnit) then
+                        return true
+                    end
+                end
+                return false
+            end
+            if obj.type == 'doc.type.array' then
+                return hasSelfGenericPlaceholder(obj.node)
+            end
+            if obj.type == 'doc.type.sign' and obj.signs then
+                for _, sign in ipairs(obj.signs) do
+                    if hasSelfGenericPlaceholder(sign) then
+                        return true
+                    end
+                end
+                return false
+            end
+            if obj.type == 'doc.type.table' and obj.fields then
+                for _, field in ipairs(obj.fields) do
+                    if hasSelfGenericPlaceholder(field.name)
+                    or hasSelfGenericPlaceholder(field.extends) then
+                        return true
+                    end
+                end
+            end
+            return false
+        end
+
+        local mappedReturnNode = vm.createNode()
+        local hasMappedReturn = false
+        for currentReturn in returnNode:eachObject() do
+            if currentReturn.type == 'global'
+            and currentReturn.cate == 'type'
+            and selfGenericResolved[currentReturn.name] then
+                mappedReturnNode:merge(selfGenericResolved[currentReturn.name])
+                hasMappedReturn = true
+            elseif hasSelfGenericPlaceholder(currentReturn) then
+                local clonedReturn = vm.cloneObject(currentReturn, selfGenericResolved)
+                if clonedReturn then
+                    mappedReturnNode:merge(vm.compileNode(clonedReturn))
+                    hasMappedReturn = true
+                else
+                    mappedReturnNode:merge(currentReturn)
+                end
+            else
+                mappedReturnNode:merge(currentReturn)
+            end
+        end
+        if hasMappedReturn then
+            returnNode = mappedReturnNode
         end
     end
 
@@ -2367,6 +2450,7 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
                     local resolvedMap = genericMap
                     local sign = vm.getSign(mfunc)
                     if sign and resolveArgs and #resolveArgs > 0 then
+                        ---@cast sign vm.sign
                         local callResolved = sign:resolve(guide.getUri(source), resolveArgs)
                         if callResolved and next(callResolved) then
                             resolvedMap = {}
@@ -2530,7 +2614,13 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
     if returnNode then
         if not isBranchResolved and not resolvedGenericKeys then
             for rnode in returnNode:eachObject() do
-                if rnode.type ~= 'doc.generic.name' then
+                if rnode.type == 'doc.generic.name' then
+                    ---@cast rnode parser.object
+                    local resolved = vm.getGenericResolved(rnode)
+                    if resolved then
+                        vm.setNode(source, resolved)
+                    end
+                else
                     vm.setNode(source, rnode)
                 end
             end
@@ -2586,6 +2676,7 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
             targetNode:addOptional()
         end
     end
+
 end
 
 ---@param source parser.object

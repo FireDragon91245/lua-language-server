@@ -111,7 +111,7 @@ local v
 ---@type Bar
 local v2
 v2 = v
-v2:<!method1!>()
+v2:method1()
 v2:<!method2!>()
 ]]
 
@@ -122,6 +122,82 @@ print(T1.f1)
 ---@type tablelib
 T2 = {}
 print(T2.<!f2!>)
+]]
+
+TEST [[
+local startIndex = string.find('abc', 'a')
+local first = table.unpack({ 1, 2, 3 })
+print(startIndex, first)
+]]
+
+TEST [[
+---@class equality_comparer
+---@field compare fun(self: equality_comparer, a: any, b: any, prep_for_next: boolean|nil): any|boolean, any
+
+---@type equality_comparer
+local comparer
+
+comparer:compare(1, 2)
+comparer:<!missing!>(1, 2)
+]]
+
+TEST [[
+---@class equality_comparer
+---@field compare fun(self: equality_comparer, a: any, b: any, prep_for_next: boolean|nil): any, any
+---@field comparers { [string]: equality_comparer }
+---@field is_combined fun(self: equality_comparer): boolean
+---@field key fun(self: equality_comparer): string
+---@field priority number
+---@field types fun(self: equality_comparer): string[]
+
+---@type equality_comparer
+local comparer = {}
+
+local value = { 1, 2 }
+local predicate_or_selector = true
+
+comparer:compare(value[#value], predicate_or_selector)
+comparer:<!missing!>(value[#value], predicate_or_selector)
+]]
+
+TEST [[
+---@class equality_comparer
+---@operator band(equality_comparer): equality_comparer
+---@field compare fun(self: equality_comparer, a: any, b: any, prep_for_next: boolean|nil): any|boolean, any
+---@field is_combined fun(self: equality_comparer): boolean
+---@field key fun(self: equality_comparer): string
+---@field types fun(self: equality_comparer): type[]
+---@field priority number
+---@field comparers { [type]: equality_comparer }
+
+---@type equality_comparer
+local comparer = {
+    compare = function (self, a, b, prep_for_next)
+        return a == b, prep_for_next
+    end,
+    comparers = {},
+    is_combined = function (self)
+        return false
+    end,
+    key = function (self)
+        return ''
+    end,
+    priority = 1,
+    types = function (self)
+        return {}
+    end,
+}
+
+local value = { 1, 2 }
+local predicate_or_selector = true
+
+local function test()
+    return not comparer:compare(value[#value], predicate_or_selector)
+end
+
+local function broken()
+    return not comparer:<!missing!>(value[#value], predicate_or_selector)
+end
 ]]
 
 TEST [[
