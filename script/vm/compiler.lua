@@ -2328,9 +2328,59 @@ local function bindReturnOfFunction(source, mfunc, index, args, callFunc)
     end
 
     if mfunc.type == 'function' or mfunc.type == 'doc.type.function' then
+        local function hasUnresolvedGenericPlaceholder(obj)
+            if not obj then
+                return false
+            end
+            if vm.isGenericUnsolved(obj) then
+                return true
+            end
+            if obj.type == 'doc.type' and obj.types then
+                for _, typeUnit in ipairs(obj.types) do
+                    if hasUnresolvedGenericPlaceholder(typeUnit) then
+                        return true
+                    end
+                end
+                return false
+            end
+            if obj.type == 'doc.type.array' then
+                return hasUnresolvedGenericPlaceholder(obj.node)
+            end
+            if obj.type == 'doc.type.sign' and obj.signs then
+                for _, sign in ipairs(obj.signs) do
+                    if hasUnresolvedGenericPlaceholder(sign) then
+                        return true
+                    end
+                end
+                return false
+            end
+            if obj.type == 'doc.type.table' and obj.fields then
+                for _, field in ipairs(obj.fields) do
+                    if hasUnresolvedGenericPlaceholder(field.name)
+                    or hasUnresolvedGenericPlaceholder(field.extends) then
+                        return true
+                    end
+                end
+                return false
+            end
+            if obj.type == 'doc.type.function' then
+                for _, arg in ipairs(obj.args or {}) do
+                    if hasUnresolvedGenericPlaceholder(arg.extends) then
+                        return true
+                    end
+                end
+                for _, ret in ipairs(obj.returns or {}) do
+                    if hasUnresolvedGenericPlaceholder(ret) then
+                        return true
+                    end
+                end
+            end
+            return false
+        end
+
         local hasUnresolvedGeneric = false
         for rnode in returnNode:eachObject() do
-            if vm.isGenericUnsolved(rnode) then
+            if hasUnresolvedGenericPlaceholder(rnode) then
                 hasUnresolvedGeneric = true
                 break
             end

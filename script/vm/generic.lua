@@ -13,6 +13,107 @@ local mt = {}
 mt.__index = mt
 mt.type = 'generic'
 
+---@param source table?
+---@return string?
+local function getSingleGenericKey(source)
+    if not source then
+        return nil
+    end
+    if source.type == 'doc.generic.name' then
+        return source[1]
+    end
+    if source.type == 'doc.type' and source.types and #source.types == 1 then
+        local inner = source.types[1]
+        if inner.type == 'doc.generic.name' then
+            return inner[1]
+        end
+    end
+    return nil
+end
+
+---@param source parser.object
+---@param resolved table<string, vm.node>
+---@return vm.node?
+local function getNilFilteredGenericNode(source, resolved)
+    if not source.optional
+    or not source.parent
+    or source.parent.type ~= 'doc.type'
+    or not source.parent.types
+    or #source.parent.types <= 1 then
+        return nil
+    end
+
+    local key = getSingleGenericKey(source)
+    if not key or not resolved[key] then
+        return nil
+    end
+
+    local filteredNode = resolved[key]:copy()
+    filteredNode:remove('nil')
+    filteredNode:removeOptional()
+    if filteredNode:isEmpty() then
+        return vm.createNode()
+    end
+    return filteredNode
+end
+
+---@param source table?
+---@param resolved table<string, vm.node>
+---@return boolean
+local function hasResolvedGenericReference(source, resolved)
+    if not source then
+        return false
+    end
+    if (source.type == 'doc.type.name' or source.type == 'doc.generic.name') and source[1] then
+        return resolved[source[1]] ~= nil
+    end
+    if source.type == 'doc.type' and source.types then
+        for _, typeUnit in ipairs(source.types) do
+            if hasResolvedGenericReference(typeUnit, resolved) then
+                return true
+            end
+        end
+        return false
+    end
+    if source.type == 'doc.type.arg' then
+        return hasResolvedGenericReference(source.extends, resolved)
+    end
+    if source.type == 'doc.type.array' then
+        return hasResolvedGenericReference(source.node, resolved)
+    end
+    if source.type == 'doc.type.table' and source.fields then
+        for _, field in ipairs(source.fields) do
+            if hasResolvedGenericReference(field.name, resolved)
+            or hasResolvedGenericReference(field.extends, resolved) then
+                return true
+            end
+        end
+        return false
+    end
+    if source.type == 'doc.type.function' then
+        for _, arg in ipairs(source.args or {}) do
+            if hasResolvedGenericReference(arg, resolved) then
+                return true
+            end
+        end
+        for _, ret in ipairs(source.returns or {}) do
+            if hasResolvedGenericReference(ret, resolved) then
+                return true
+            end
+        end
+        return false
+    end
+    if source.type == 'doc.type.sign' and source.signs then
+        for _, sign in ipairs(source.signs) do
+            if hasResolvedGenericReference(sign, resolved) then
+                return true
+            end
+        end
+        return false
+    end
+    return false
+end
+
 ---@param source    table?
 ---@param resolved? table<string, vm.node>
 ---@return vm.object?
@@ -51,17 +152,42 @@ local function cloneObject(source, resolved)
         end
     end
     if source.type == 'doc.type' then
+        local nilFilteredNode = resolved and getNilFilteredGenericNode(source, resolved)
+        if nilFilteredNode and nilFilteredNode:isEmpty() then
+            return nil
+        end
+
+        local effectiveResolved = resolved
+        local preserveOptional = source.optional
+        if nilFilteredNode then
+            local key = getSingleGenericKey(source)
+            effectiveResolved = setmetatable({
+                [key] = nilFilteredNode,
+            }, {
+                __index = resolved,
+            })
+            preserveOptional = false
+        end
+
         local newType = {
             type     = source.type,
             start    = source.start,
             finish   = source.finish,
             parent   = source.parent,
-            optional = source.optional,
+            optional = preserveOptional,
             types    = {},
         }
         for i, typeUnit in ipairs(source.types) do
-            local newObj     = cloneObject(typeUnit, resolved)
-            newType.types[i] = newObj
+            local newObj = cloneObject(typeUnit, effectiveResolved)
+            if newObj then
+                if type(newObj) == 'table' then
+                    newObj.parent = newType
+                end
+                newType.types[#newType.types+1] = newObj
+            end
+        end
+        if #newType.types == 0 then
+            return nil
         end
         return newType
     end
@@ -145,14 +271,7 @@ local function cloneObject(source, resolved)
         local needsClone = false
         if isClassGeneric then
             for _, sign in ipairs(source.signs) do
-                if sign.type == 'doc.type' then
-                    for _, tp in ipairs(sign.types) do
-                        if (tp.type == 'doc.type.name' or tp.type == 'doc.generic.name') and resolved[tp[1]] then
-                            needsClone = true
-                            break
-                        end
-                    end
-                elseif (sign.type == 'doc.type.name' or sign.type == 'doc.generic.name') and resolved[sign[1]] then
+                if hasResolvedGenericReference(sign, resolved) then
                     needsClone = true
                 end
                 if needsClone then break end

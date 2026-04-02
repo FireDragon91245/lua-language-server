@@ -953,9 +953,39 @@ function parseType(parent)
             break
         end
 
+        local hasMemberOptional = false
+        if checkToken('symbol', '?', 1) then
+            nextToken()
+            hasMemberOptional = true
+        end
+
+        local isUnionMemberOptional = hasMemberOptional
+            and (
+                #result.types > 0
+                or checkToken('symbol', '|', 1)
+            )
+        if isUnionMemberOptional then
+            typeUnit = {
+                type        = 'doc.type',
+                parent      = result,
+                start       = typeUnit.start,
+                finish      = getFinish(),
+                firstFinish = getFinish(),
+                optional    = true,
+                types       = {
+                    typeUnit,
+                },
+            }
+            typeUnit.types[1].parent = typeUnit
+        end
+
         result.types[#result.types+1] = typeUnit
         if not result.start then
             result.start = typeUnit.start
+        end
+
+        if hasMemberOptional and not isUnionMemberOptional then
+            result.optional = true
         end
 
         if not checkToken('symbol', '|', 1) then
@@ -966,7 +996,7 @@ function parseType(parent)
     if not result.start then
         result.start = getFinish()
     end
-    if checkToken('symbol', '?', 1) then
+    if not result.optional and checkToken('symbol', '?', 1) then
         nextToken()
         result.optional = true
     end

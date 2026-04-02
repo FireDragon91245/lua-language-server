@@ -962,6 +962,117 @@ local list = make_list(1, 2, 2, 3, 4, test, 5)
 local <?list2?> = make_list(list)
 ]]
 
+TEST 'enumerable<enumerable<integer>>' [[
+---@class enumerable<T>
+local enumerable = {}
+
+---@class list<T>
+local list = {}
+
+local linq = {}
+
+---@generic T
+---@overload fun(...: T): enumerable<T>
+function linq.enumerable(...)
+end
+
+---@generic T, R1, R2
+---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1?), fork2: fun(enumerable: enumerable<T>): (R2?)): enumerable<R1?|R2?>
+function enumerable:fork(...)
+end
+
+---@param self enumerable<T>
+function enumerable:foreach(...)
+end
+
+---@type enumerable<integer>
+local l = linq.enumerable(1, 2, 3)
+
+local fork = l:fork(function (e)
+    e:foreach(print)
+    return nil
+end, function (e)
+    return e
+end)
+
+local <?fork?> = fork
+]]
+
+TEST 'enumerable<integer|enumerable<integer>>' [[
+---@class enumerable<T>
+local enumerable = {}
+
+local linq = {}
+
+---@generic T
+---@overload fun(...: T): enumerable<T>
+function linq.enumerable(...)
+end
+
+---@generic T, R1, R2
+---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1?), fork2: fun(enumerable: enumerable<T>): (R2?)): enumerable<R1?|R2?>
+function enumerable:fork(...)
+end
+
+---@param self enumerable<T>
+---@return boolean
+function enumerable:any()
+end
+
+---@type enumerable<integer>
+local l = linq.enumerable(1, 2, 3)
+
+local fork = l:fork(function (e)
+    if e:any() then
+        return nil
+    end
+    return 1
+end, function (e)
+    return e
+end)
+
+local <?fork?> = fork
+]]
+
+TEST 'enumerable<integer|enumerable<integer>>' [[
+---@class enumerable<T>
+local enumerable = {}
+
+---@generic T, K, V, R1, R2
+---@overload fun(self: enumerable<T>): enumerable<T>, enumerable<T>
+---@overload fun(self: enumerable<K, V>): enumerable<K, V>, enumerable<K, V>
+---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1?), fork2: fun(enumerable: enumerable<T>): (R2?)): enumerable<R1?|R2?>
+---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2)): enumerable<R1|R2>
+function enumerable:fork(...)
+end
+
+---@param self enumerable<T>
+---@return boolean
+function enumerable:any()
+end
+
+local linq = {}
+
+---@generic T
+---@overload fun(...: T): enumerable<T>
+function linq.enumerable(...)
+end
+
+---@type enumerable<integer>
+local l = linq.enumerable(1, 2, 3)
+
+local fork = l:fork(function (e)
+    if e:any() then
+        return nil
+    end
+    return 1
+end, function (e)
+    return e
+end)
+
+local <?fork?> = fork
+]]
+
 TEST 'list<string|integer>' [[
 ---@class list<T>
 ---@class enumerable<T>

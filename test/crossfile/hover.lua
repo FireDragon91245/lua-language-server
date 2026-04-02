@@ -1852,3 +1852,140 @@ local t: {
 }
 ```]]
 }
+
+TEST {
+    {
+        path = 'linq/map.lua',
+        content = [[
+            local map = {}
+
+            function map:get()
+                return self
+            end
+
+            return setmetatable(map, {
+                __call = function (self)
+                    return self
+                end,
+            })
+        ]],
+    },
+    {
+        path = 'linq/predicates.lua',
+        content = [[
+            local predicates = {}
+
+            function predicates:get()
+                return self
+            end
+
+            return predicates
+        ]],
+    },
+    {
+        path = 'linq.lua',
+        content = [[
+            local map = require("linq.map")
+            local predicate_parser = require("linq.predicates"):get()
+
+            ---@class linq
+            local linq = {}
+
+            ---@class enumerable<T>
+            ---@class enumerable<K, V>
+            local enumerable_impl = {}
+
+            ---@class list<T>
+            local list_impl = {}
+
+            ---@return metatable
+            local function makeListMeta()
+                return {
+                    __index = list_impl,
+                    __type = "list",
+                }
+            end
+
+            ---@return metatable
+            local function makeEnumerableMeta()
+                return {
+                    __index = enumerable_impl,
+                    __type = "enumerable",
+                }
+            end
+
+            ---@generic T, K, V
+            ---@overload fun(self: enumerable<T>): boolean
+            ---@overload fun(self: enumerable<K, V>): boolean
+            function enumerable_impl:any(...)
+            end
+
+            ---@generic T, K, V, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10
+            ---@overload fun(self: enumerable<T>): enumerable<T>, enumerable<T>
+            ---@overload fun(self: enumerable<K, V>): enumerable<K, V>, enumerable<K, V>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1?), fork2: fun(enumerable: enumerable<T>): (R2?)): enumerable<R1?|R2?>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2)): enumerable<R1|R2>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3)): enumerable<R1|R2|R3>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3)): enumerable<R1|R2|R3>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4)): enumerable<R1|R2|R3|R4>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4)): enumerable<R1|R2|R3|R4>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4), fork5: fun(enumerable: enumerable<T>): (R5)): enumerable<R1|R2|R3|R4|R5>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4), fork5: fun(enumerable: enumerable<K, V>): (R5)): enumerable<R1|R2|R3|R4|R5>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4), fork5: fun(enumerable: enumerable<T>): (R5), fork6: fun(enumerable: enumerable<T>): (R6)): enumerable<R1|R2|R3|R4|R5|R6>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4), fork5: fun(enumerable: enumerable<K, V>): (R5), fork6: fun(enumerable: enumerable<K, V>): (R6)): enumerable<R1|R2|R3|R4|R5|R6>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4), fork5: fun(enumerable: enumerable<T>): (R5), fork6: fun(enumerable: enumerable<T>): (R6), fork7: fun(enumerable: enumerable<T>): (R7)): enumerable<R1|R2|R3|R4|R5|R6|R7>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4), fork5: fun(enumerable: enumerable<K, V>): (R5), fork6: fun(enumerable: enumerable<K, V>): (R6), fork7: fun(enumerable: enumerable<K, V>): (R7)): enumerable<R1|R2|R3|R4|R5|R6|R7>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4), fork5: fun(enumerable: enumerable<T>): (R5), fork6: fun(enumerable: enumerable<T>): (R6), fork7: fun(enumerable: enumerable<T>): (R7), fork8: fun(enumerable: enumerable<T>): (R8)): enumerable<R1|R2|R3|R4|R5|R6|R7|R8>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4), fork5: fun(enumerable: enumerable<K, V>): (R5), fork6: fun(enumerable: enumerable<K, V>): (R6), fork7: fun(enumerable: enumerable<K, V>): (R7), fork8: fun(enumerable: enumerable<K, V>): (R8)): enumerable<R1|R2|R3|R4|R5|R6|R7|R8>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4), fork5: fun(enumerable: enumerable<T>): (R5), fork6: fun(enumerable: enumerable<T>): (R6), fork7: fun(enumerable: enumerable<T>): (R7), fork8: fun(enumerable: enumerable<T>): (R8), fork9: fun(enumerable: enumerable<T>): (R9)): enumerable<R1|R2|R3|R4|R5|R6|R7|R8|R9>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4), fork5: fun(enumerable: enumerable<K, V>): (R5), fork6: fun(enumerable: enumerable<K, V>): (R6), fork7: fun(enumerable: enumerable<K, V>): (R7), fork8: fun(enumerable: enumerable<K, V>): (R8), fork9: fun(enumerable: enumerable<K, V>): (R9)): enumerable<R1|R2|R3|R4|R5|R6|R7|R8|R9>
+            ---@overload fun(self: enumerable<T>, fork1: fun(enumerable: enumerable<T>): (R1), fork2: fun(enumerable: enumerable<T>): (R2), fork3: fun(enumerable: enumerable<T>): (R3), fork4: fun(enumerable: enumerable<T>): (R4), fork5: fun(enumerable: enumerable<T>): (R5), fork6: fun(enumerable: enumerable<T>): (R6), fork7: fun(enumerable: enumerable<T>): (R7), fork8: fun(enumerable: enumerable<T>): (R8), fork9: fun(enumerable: enumerable<T>): (R9), fork10: fun(enumerable: enumerable<T>): (R10)): enumerable<R1|R2|R3|R4|R5|R6|R7|R8|R9|R10>
+            ---@overload fun(self: enumerable<K, V>, fork1: fun(enumerable: enumerable<K, V>): (R1), fork2: fun(enumerable: enumerable<K, V>): (R2), fork3: fun(enumerable: enumerable<K, V>): (R3), fork4: fun(enumerable: enumerable<K, V>): (R4), fork5: fun(enumerable: enumerable<K, V>): (R5), fork6: fun(enumerable: enumerable<K, V>): (R6), fork7: fun(enumerable: enumerable<K, V>): (R7), fork8: fun(enumerable: enumerable<K, V>): (R8), fork9: fun(enumerable: enumerable<K, V>): (R9), fork10: fun(enumerable: enumerable<K, V>): (R10)): enumerable<R1|R2|R3|R4|R5|R6|R7|R8|R9|R10>
+            function enumerable_impl:fork(...)
+            end
+
+            local function list_impl_enumerable_next(iter, enumerator)
+                return enumerator.__src[1]
+            end
+
+            ---@generic T
+            ---@param self list<T>
+            ---@return enumerable<T>
+            function list_impl:enumerate()
+                return setmetatable({
+                    __src = self,
+                    __next = list_impl_enumerable_next,
+                }, makeEnumerableMeta())
+            end
+
+            ---@generic T
+            ---@overload fun(): list<any>
+            ---@overload fun(...: T): list<T>
+            ---@overload fun(list: list<T>): list<T>
+            ---@overload fun(enumerable: enumerable<T>): list<T>
+            function linq.list(...)
+                return setmetatable({ ... }, makeListMeta())
+            end
+
+            return linq
+        ]],
+    },
+    {
+        path = 'main.lua',
+        content = [[
+            local linq = require("linq")
+
+            local l = linq.list(2, 3, 4, 5):enumerate()
+            local <?fork?> = l:fork(function (e)
+                if e:any() then return nil end
+                return 1
+            end, function (e)
+                return e
+            end)
+        ]],
+    },
+    hover = [[
+```lua
+local fork: enumerable<integer|enumerable<integer>>
+```]],
+}
