@@ -916,11 +916,20 @@ local function hasExactLiteralMatch(arg, param)
     return false
 end
 
----@param param parser.object?
+---@param param parser.object|vm.generic?
 ---@return parser.object?
 local function getFunctionParamProto(param)
     if not param then
         return nil
+    end
+    if param.type == 'generic' then
+        ---@cast param vm.generic
+        local proto = param.proto
+        if not proto or proto.type == 'generic' then
+            return nil
+        end
+        ---@cast proto parser.object
+        param = proto
     end
     if param.type == 'doc.type.arg' and param.extends then
         param = param.extends
@@ -929,9 +938,216 @@ local function getFunctionParamProto(param)
         param = param.types[1]
     end
     if param.type == 'doc.type.function' then
+        ---@cast param parser.object
         return param
     end
     return nil
+end
+
+---@param source parser.object|vm.generic?
+---@return boolean
+local function hasGenericTypeSource(source)
+    if not source then
+        return false
+    end
+    ---@type parser.object?
+    local sourceObject
+    if source.type == 'generic' then
+        ---@cast source vm.generic
+        local proto = source.proto
+        if not proto or proto.type == 'generic' then
+            return false
+        end
+        ---@cast proto parser.object
+        sourceObject = proto
+    else
+        ---@cast source parser.object
+        sourceObject = source
+    end
+    local hasGeneric = false
+    guide.eachSourceType(sourceObject, 'doc.generic.name', function (_)
+        hasGeneric = true
+        return false
+    end)
+    return hasGeneric
+end
+
+---@type fun(uri: uri, func: parser.object?): string[]?, boolean
+local getNormalizedCallbackReturns
+
+---@param uri uri
+---@param actualFunc parser.object?
+---@param expectedFunc parser.object?
+---@param originalExpected parser.object|vm.generic?
+---@return integer
+local function getCallbackReturnSpecificityScore(uri, actualFunc, expectedFunc, originalExpected)
+    if not actualFunc or not expectedFunc then
+        return 0
+    end
+
+    local actualReturns = getNormalizedCallbackReturns(uri, actualFunc)
+    local expectedReturns, expectedHasGeneric = getNormalizedCallbackReturns(uri, expectedFunc)
+    if actualReturns and expectedReturns then
+        local score = 0
+        local comparedReturns = math.min(#actualReturns, #expectedReturns)
+        for index = 1, comparedReturns do
+            local actualView = actualReturns[index]
+            local expectedView = expectedReturns[index]
+            if actualView == expectedView then
+                if not expectedHasGeneric then
+                    score = score + 16
+                else
+                    score = score + 4
+                end
+            else
+                local actualName, actualArity = getStructuredTypeInfo(actualView)
+                local expectedName, expectedArity = getStructuredTypeInfo(expectedView)
+                if actualName and expectedName and actualName == expectedName then
+                    if actualArity == expectedArity then
+                        score = score + (expectedHasGeneric and 2 or 6)
+                    else
+                        score = score + 1
+                    end
+                end
+            end
+        end
+        return score
+    end
+
+    local _, _, actualRetDef = vm.countReturnsOfFunction(actualFunc)
+    local _, _, expectedRetDef = vm.countReturnsOfFunction(expectedFunc)
+    local comparedReturns = math.min(actualRetDef, expectedRetDef)
+    if comparedReturns <= 0 then
+        return 0
+    end
+
+    local score = 0
+    for index = 1, comparedReturns do
+        local actualRet = vm.getReturnOfFunction(actualFunc, index)
+        local expectedRet = vm.getReturnOfFunction(expectedFunc, index)
+        if not actualRet or not expectedRet then
+            goto CONTINUE
+        end
+
+        local actualNode = vm.compileNode(actualRet)
+        local expectedNode = vm.compileNode(expectedRet)
+        local actualView = vm.getInfer(actualNode):view(uri)
+        local expectedView = vm.getInfer(expectedNode):view(uri)
+        local expectedHasGeneric = hasGenericTypeSource(expectedRet)
+
+        if actualView and expectedView then
+            if actualView == expectedView then
+                if not expectedHasGeneric then
+                    score = score + 16
+                else
+                    score = score + 4
+                end
+            else
+                local actualName, actualArity = getStructuredTypeInfo(actualView)
+                local expectedName, expectedArity = getStructuredTypeInfo(expectedView)
+                if actualName and expectedName and actualName == expectedName then
+                    if actualArity == expectedArity then
+                        score = score + (expectedHasGeneric and 2 or 6)
+                    else
+                        score = score + 1
+                    end
+                end
+            end
+        end
+
+        if not expectedHasGeneric
+        and vm.canCastType(uri, expectedNode, actualNode)
+        and vm.canCastType(uri, actualNode, expectedNode) then
+            score = score + 4
+        end
+
+        ::CONTINUE::
+    end
+
+    return score
+end
+
+---@param uri uri
+---@param func parser.object?
+---@return string[]?
+---@return boolean
+getNormalizedCallbackReturns = function (uri, func)
+    if not func then
+        return nil, false
+    end
+    local _, max, def = vm.countReturnsOfFunction(func)
+    if def <= 0 then
+        return { 'nil' }, false
+    end
+    if max ~= def then
+        return nil, false
+    end
+
+    local returns = {}
+    local hasGeneric = false
+    for index = 1, def do
+        local ret = vm.getReturnOfFunction(func, index)
+        if not ret then
+            return nil, false
+        end
+        local view = vm.getInfer(ret):view(uri)
+        if not view then
+            return nil, false
+        end
+        returns[index] = view
+        if hasGenericTypeSource(ret) then
+            hasGeneric = true
+        end
+    end
+    return returns, hasGeneric
+end
+
+---@param actualReturns string[]?
+---@param expectedReturns string[]?
+---@return boolean
+local function isExactCallbackReturnMatch(actualReturns, expectedReturns)
+    if not actualReturns or not expectedReturns then
+        return false
+    end
+    if #actualReturns ~= #expectedReturns then
+        return false
+    end
+    for index = 1, #expectedReturns do
+        if actualReturns[index] ~= expectedReturns[index] then
+            return false
+        end
+    end
+    return true
+end
+
+---@param uri uri
+---@param arg parser.object?
+---@param param parser.object|vm.generic?
+---@return boolean
+local function hasExactSpecificCallbackReturnMatch(uri, arg, param)
+    if not arg then
+        return false
+    end
+    local func = getFunctionParamProto(param)
+    if not func then
+        return false
+    end
+    local expectedReturns, expectedHasGeneric = getNormalizedCallbackReturns(uri, func)
+    if not expectedReturns or expectedHasGeneric then
+        return false
+    end
+
+    local node = vm.compileNode(arg)
+    for callback in node:eachObject() do
+        if callback.type == 'function' or callback.type == 'doc.type.function' then
+            ---@cast callback parser.object
+            local actualReturns = getNormalizedCallbackReturns(uri, callback)
+            if isExactCallbackReturnMatch(actualReturns, expectedReturns) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 ---@param uri uri
@@ -971,10 +1187,13 @@ getCallableVariableCallbackScore = function (uri, actual, expected)
             end
 
             if expectedRetMax ~= math.huge then
-                if actualRetMax < expectedRetMin then
+                local actualReturns = getNormalizedCallbackReturns(uri, callback)
+                local expectedReturns = getNormalizedCallbackReturns(uri, expectedFunc)
+                if isExactCallbackReturnMatch(actualReturns, expectedReturns) then
+                    score = score + 14
+                elseif actualRetMax < expectedRetMin then
                     goto CONTINUE
-                end
-                if actualRetMax == expectedRetMax and actualRetDef == expectedRetDef then
+                elseif actualRetMax == expectedRetMax and actualRetDef == expectedRetDef then
                     score = score + 14
                 elseif actualRetDef >= expectedRetDef then
                     score = score + 4
@@ -1021,6 +1240,7 @@ getCallableVariableCallbackScore = function (uri, actual, expected)
             end
 
             if compatible and score > bestScore then
+                score = score + getCallbackReturnSpecificityScore(uri, callback, expectedFunc, expected)
                 bestScore = score
             end
             ::CONTINUE::
@@ -1036,7 +1256,7 @@ end
 ---@param actual parser.object?
 ---@param expected parser.object?
 ---@return integer
-local function getCallbackSpecificityScore(actual, expected)
+local function getCallbackSpecificityScore(uri, actual, expected, originalExpected)
     if not actual or actual.type ~= 'function' then
         return 0
     end
@@ -1063,7 +1283,11 @@ local function getCallbackSpecificityScore(actual, expected)
     end
 
     if expectedRetMax ~= math.huge then
-        if actualRetMax < expectedRetMin then
+        local actualReturns = getNormalizedCallbackReturns(uri, actual)
+        local expectedReturns = getNormalizedCallbackReturns(uri, expectedFunc)
+        if isExactCallbackReturnMatch(actualReturns, expectedReturns) then
+            score = score + 14
+        elseif actualRetMax < expectedRetMin then
             score = score - 20
         elseif actualRetMax == expectedRetMax and actualRetDef == expectedRetDef then
             score = score + 14
@@ -1073,6 +1297,8 @@ local function getCallbackSpecificityScore(actual, expected)
             score = score - 8
         end
     end
+
+    score = score + getCallbackReturnSpecificityScore(uri, actual, expectedFunc, originalExpected or expected)
 
     return score
 end
@@ -1133,7 +1359,7 @@ local function calcFunctionMatchScore(uri, callFunc, args, func)
             end
         end
         matchScore = matchScore + getParamSpecificityScore(uri, arg, param)
-        matchScore = matchScore + getCallbackSpecificityScore(arg, param)
+        matchScore = matchScore + getCallbackSpecificityScore(uri, arg, param, originalParam)
         matchScore = matchScore + getCallableVariableCallbackScore(uri, arg, param)
         local _, literalsCount = vm.getLiterals(param)
         if hasExactLiteralMatch(arg, param) then
@@ -1226,6 +1452,30 @@ local function filterMethodSelfOverloads(uri, args, callFunc, funcs)
     return funcs
 end
 
+---@param uri uri
+---@param args parser.object[]
+---@param callFunc parser.object?
+---@param funcs parser.object[]
+---@return parser.object[]
+local function filterExactCallbackReturnOverloads(uri, args, callFunc, funcs)
+    local filtered = funcs
+    for i = 1, #args do
+        local preferred = {}
+        for _, func in ipairs(filtered) do
+            local argOffset = getMethodArgOffset(callFunc, args, func)
+            local param = func.args and func.args[i + argOffset]
+            if hasExactSpecificCallbackReturnMatch(uri, args[i], param) then
+                preferred[#preferred + 1] = func
+            end
+        end
+        if #preferred > 0 then
+            filtered = preferred
+        end
+        ::CONTINUE::
+    end
+    return filtered
+end
+
 ---@param args parser.object[]
 ---@param callFunc parser.object?
 ---@param funcs parser.object[]
@@ -1294,6 +1544,10 @@ function vm.getExactMatchedFunctions(func, args)
         return funcs
     end
     funcs = filterMethodSelfOverloads(uri, args, func, funcs)
+    if #funcs == 1 then
+        return funcs
+    end
+    funcs = filterExactCallbackReturnOverloads(uri, args, func, funcs)
     if #funcs == 1 then
         return funcs
     end
