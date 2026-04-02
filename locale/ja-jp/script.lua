@@ -149,6 +149,8 @@ DIAG_CAST_LOCAL_TYPE                  =
 '変数が `{def}` 型として定義されているため、`{ref}` 型に変換できません。'
 DIAG_CAST_FIELD_TYPE                  =
 'フィールドが `{def}` 型として定義されているため、`{ref}` 型に変換できません。'
+DIAG_ASSIGN_CALL_NIL                  =
+'この呼び出しは戻り値がないか、`nil` しか返しません。変数へ代入するのは不自然です。'
 DIAG_ASSIGN_TYPE_MISMATCH             =
 '`{ref}` を `{def}` に代入できません。'
 DIAG_PARAM_TYPE_MISMATCH              =

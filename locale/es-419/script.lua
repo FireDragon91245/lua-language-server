@@ -149,6 +149,8 @@ DIAG_CAST_LOCAL_TYPE                  =
 'Esta variable fue definida como tipo `{def}`. No se puede convertir su tipo a `{ref}`.'
 DIAG_CAST_FIELD_TYPE                  =
 'Este campo fue definido como tipo `{def}`. No se puede convertir su tipo a `{ref}`.'
+DIAG_ASSIGN_CALL_NIL                  =
+'Esta llamada no devuelve valor o solo devuelve `nil`; asignarla a una variable es sospechoso.'
 DIAG_ASSIGN_TYPE_MISMATCH             =
 'No se puede asignar `{ref}` a `{def}`'
 DIAG_PARAM_TYPE_MISMATCH              =

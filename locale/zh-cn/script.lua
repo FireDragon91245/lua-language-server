@@ -149,6 +149,8 @@ DIAG_CAST_LOCAL_TYPE                  =
 '已显式定义变量的类型为 `{def}` ，不能再将其类型转换为 `{ref}`。'
 DIAG_CAST_FIELD_TYPE                  =
 '已显式定义字段的类型为 `{def}` ，不能再将其类型转换为 `{ref}`。'
+DIAG_ASSIGN_CALL_NIL                  =
+'此调用没有返回值，或只会返回 `nil`；将它赋值给变量是可疑的。'
 DIAG_ASSIGN_TYPE_MISMATCH             =
 '不能将 `{ref}` 赋值给 `{def}`。'
 DIAG_PARAM_TYPE_MISMATCH              =

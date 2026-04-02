@@ -373,6 +373,8 @@ config.diagnostics['empty-block']           =
 '空代码块'
 config.diagnostics['redundant-value']       =
 '赋值操作时，值的数量比被赋值的对象多'
+config.diagnostics['assign-call-nil']       =
+'启用对“将没有返回值或只返回 `nil` 的调用结果赋值给变量”这种情况的诊断。'
 config.diagnostics['assign-type-mismatch']  =
 '值类型与赋值变量类型不匹配'
 config.diagnostics['await-in-sync']         =

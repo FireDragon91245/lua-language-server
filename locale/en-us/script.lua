@@ -149,6 +149,8 @@ DIAG_CAST_LOCAL_TYPE                  =
 'This variable is defined as type `{def}`. Cannot convert its type to `{ref}`.'
 DIAG_CAST_FIELD_TYPE                  =
 'This field is defined as type `{def}`. Cannot convert its type to `{ref}`.'
+DIAG_ASSIGN_CALL_NIL                  =
+'Assigning result of a function that returns nothing or `nil`.'
 DIAG_ASSIGN_TYPE_MISMATCH             =
 'Cannot assign `{ref}` to `{def}`.'
 DIAG_PARAM_TYPE_MISMATCH              =

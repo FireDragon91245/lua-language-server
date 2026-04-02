@@ -76,6 +76,7 @@ local function check(name)
 end
 
 check 'ambiguity-1'
+check 'assign-call-nil'
 check 'assign-type-mismatch'
 check 'await-in-sync'
 check 'cast-local-type'

@@ -375,6 +375,8 @@ config.diagnostics['empty-block']           =
 'Enable empty code block diagnostics.'
 config.diagnostics['redundant-value']       =
 'Enable the redundant values assigned diagnostics. It\'s raised during assignment operation, when the number of values is higher than the number of objects being assigned.'
+config.diagnostics['assign-call-nil']       =
+'Enable diagnostics for assigning the result of a call that returns no value or only `nil` to a variable.'
 config.diagnostics['assign-type-mismatch']  =
 'Enable diagnostics for assignments in which the value\'s type does not match the type of the assigned variable.'
 config.diagnostics['await-in-sync']         =

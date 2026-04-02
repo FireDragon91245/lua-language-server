@@ -379,6 +379,8 @@ config.diagnostics['empty-block']           =
 'Habilita el diagnóstico de bloques de código vacíos.'
 config.diagnostics['redundant-value']       =
 'Habilita el diagnóstico de valores asignados redundantemente. Se alza un error en una asignación, cuando el número de valores es mayor que el número de objetos a los cuales se les asigna.'
+config.diagnostics['assign-call-nil']       =
+'Habilita el diagnóstico al asignar a una variable el resultado de una llamada que no devuelve valor o solo devuelve `nil`.'
 config.diagnostics['assign-type-mismatch']  =
 'Habilita el diagnóstico para asignaciones en las cuales el valor del tipo no calza con el tipo de la variable siendo asignada.'
 config.diagnostics['await-in-sync']         =

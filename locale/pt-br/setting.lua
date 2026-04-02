@@ -374,6 +374,8 @@ config.diagnostics['empty-block']           =
 'Bloco vazio'
 config.diagnostics['redundant-value']       =
 'Em uma atribuição, há mais valores que variáveis-alvo'
+config.diagnostics['assign-call-nil']       =
+'Habilita diagnóstico ao atribuir a uma variável o resultado de uma chamada que não retorna valor ou retorna apenas `nil`.'
 config.diagnostics['assign-type-mismatch']  =
 'Habilita diagnóstico para atribuições em que o tipo do valor não corresponde ao tipo da variável alvo.'
 config.diagnostics['await-in-sync']         =

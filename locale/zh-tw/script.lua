@@ -149,6 +149,8 @@ DIAG_CAST_LOCAL_TYPE                  =
 '已顯式定義變數的類型為 `{def}`，不能再將其類型轉換為 `{ref}`。'
 DIAG_CAST_FIELD_TYPE                  =
 '已顯式定義欄位的類型為 `{def}`，不能再將其類型轉換為 `{ref}`。'
+DIAG_ASSIGN_CALL_NIL                  =
+'此呼叫沒有回傳值，或只會回傳 `nil`；將它指定給變數是可疑的。'
 DIAG_ASSIGN_TYPE_MISMATCH             =
 '不能將 `{ref}` 賦值給 `{def}`。'
 DIAG_PARAM_TYPE_MISMATCH              =

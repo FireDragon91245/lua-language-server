@@ -373,6 +373,8 @@ config.diagnostics['empty-block']           =
 '空程式碼區塊'
 config.diagnostics['redundant-value']       =
 '賦值操作時，值的數量比被賦值的對象多'
+config.diagnostics['assign-call-nil']       =
+'啟用對「將沒有回傳值或只回傳 `nil` 的呼叫結果指定給變數」這種情況的診斷。'
 config.diagnostics['assign-type-mismatch']  =
 '賦值類型與變數類型不符合'
 config.diagnostics['await-in-sync']         =

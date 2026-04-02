@@ -374,6 +374,8 @@ config.diagnostics['empty-block']           =
 '空のコードブロック診断を有効にします。'
 config.diagnostics['redundant-value']       =
 '代入時の余分な値の診断を有効にします。値の数が変数の数を超える場合に発生します。'
+config.diagnostics['assign-call-nil']       =
+'戻り値がないか `nil` のみを返す呼び出し結果を変数へ代入した場合の診断を有効にします。'
 config.diagnostics['assign-type-mismatch']  =
 '値の型が代入先の型と一致しない代入の診断を有効にします。'
 config.diagnostics['await-in-sync']         =

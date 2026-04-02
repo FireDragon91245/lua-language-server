@@ -218,6 +218,7 @@ m.register {
 
 m.register {
     'close-non-object',
+    'assign-call-nil',
     'deprecated',
     'discard-returns',
     'invisible',
